@@ -16,9 +16,9 @@ import { useAuth } from '../context/AuthContext';
 import { useFirstTimeSetup } from '../hooks/useFirstTimeSetup';
 import toast from 'react-hot-toast';
 
-// Derives the stable Firebase Auth email for a staff member from their Firestore doc ID
-export function staffAuthEmail(staffDocId) {
-  return `staff-${staffDocId}@staff.restaurant.app`;
+// Derives the stable Firebase Auth email for a staff member from their STF-XXXX code
+export function staffAuthEmail(staffCode) {
+  return `${staffCode.toLowerCase()}@staff.restaurant.app`;
 }
 
 // ── Staff code login form ────────────────────────────────────────────────────
@@ -102,7 +102,7 @@ function StaffLoginForm() {
     // ── Step 3: Firebase Auth sign-in ────────────────────────────────────────
     // Email is stable (based on Firestore doc ID, never changes).
     // Password is the STF-XXXX code itself.
-    const email = staffAuthEmail(staffDoc.id);
+    const email = staffAuthEmail(entered);
     console.log('Step 9 - Attempting Firebase auth sign in');
     try {
       await signInWithEmailAndPassword(auth, email, entered);

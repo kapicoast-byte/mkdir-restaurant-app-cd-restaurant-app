@@ -21,6 +21,7 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   updatePassword,
+  updateEmail,
 } from 'firebase/auth';
 import { db } from '../../firebase/config';
 import { withSecondaryAuth } from '../../firebase/secondaryAuth';
@@ -54,6 +55,7 @@ export default function OwnerStaff() {
   const [saving, setSaving] = useState(false);
   const [deactivateTarget, setDeactivateTarget] = useState(null);
   const [codeViewTarget, setCodeViewTarget] = useState(null);
+  const [resettingId, setResettingId] = useState(null);
 
   useEffect(() => {
     const unsubStaff = onSnapshot(
@@ -93,8 +95,16 @@ export default function OwnerStaff() {
 
       // ── Create new staff member ────────────────────────────────────────────
       const code = generateStaffCode();
+      const email = staffAuthEmail(code);
 
-      // Step 1: Add Firestore /staff doc to get the stable document ID
+      // Step 1: Create Firebase Auth account first (fail fast — no Firestore doc yet)
+      //         Uses secondary app so the owner's session is not disturbed
+      const authUid = await withSecondaryAuth(async (tempAuth) => {
+        const cred = await createUserWithEmailAndPassword(tempAuth, email, code);
+        return cred.user.uid;
+      });
+
+      // Step 2: Add Firestore /staff doc with authUid already set
       const staffRef = await addDoc(collection(db, 'staff'), {
         name: form.name.trim(),
         role: form.role,
@@ -102,32 +112,14 @@ export default function OwnerStaff() {
         staffCode: code,
         isActive: true,
         permissionOverrides: {},
-        authUid: null, // filled in after Auth account creation
+        authUid,
         createdAt: serverTimestamp(),
       });
 
-      // Step 2: Create Firebase Auth account using the stable email (doc-ID based)
-      //         Uses secondary app so the owner's session is not disturbed
-      let authUid;
-      try {
-        const email = staffAuthEmail(staffRef.id);
-        authUid = await withSecondaryAuth(async (tempAuth) => {
-          const cred = await createUserWithEmailAndPassword(tempAuth, email, code);
-          return cred.user.uid;
-        });
-      } catch (authErr) {
-        // Clean up the orphaned Firestore doc if Auth creation failed
-        await deleteDoc(staffRef);
-        throw authErr;
-      }
-
-      // Step 3: Write authUid back to the staff doc
-      await updateDoc(staffRef, { authUid });
-
-      // Step 4: Create /users/{uid} so AuthContext can load the profile on login
+      // Step 3: Create /users/{uid} so AuthContext can load the profile on login
       await setDoc(doc(db, 'users', authUid), {
         name: form.name.trim(),
-        email: staffAuthEmail(staffRef.id),
+        email,
         role: form.role,
         branchId: form.branchId,
         staffId: staffRef.id,
@@ -151,21 +143,40 @@ export default function OwnerStaff() {
 
   const handleResetCode = async (s) => {
     const newCode = generateStaffCode();
+    const newEmail = staffAuthEmail(newCode);
+    setResettingId(s.id);
 
     try {
-      // Update Firebase Auth password via secondary app.
-      // Sign in with the OLD code (current password) then update to the new one.
-      // Only possible if the Auth account was previously created (authUid exists).
       if (s.authUid) {
-        const email = staffAuthEmail(s.id);
-        const oldCode = s.staffCode;
+        // Auth account exists — sign in with old credentials, update email + password
+        const oldEmail = staffAuthEmail(s.staffCode);
         await withSecondaryAuth(async (tempAuth) => {
-          const cred = await signInWithEmailAndPassword(tempAuth, email, oldCode);
+          const cred = await signInWithEmailAndPassword(tempAuth, oldEmail, s.staffCode);
+          await updateEmail(cred.user, newEmail);
           await updatePassword(cred.user, newCode);
+        });
+        // Keep /users/{uid} email field in sync
+        await updateDoc(doc(db, 'users', s.authUid), { email: newEmail });
+      } else {
+        // No Auth account yet (authUid was never written) — create one now
+        const authUid = await withSecondaryAuth(async (tempAuth) => {
+          const cred = await createUserWithEmailAndPassword(tempAuth, newEmail, newCode);
+          return cred.user.uid;
+        });
+        // Write authUid to /staff doc
+        await updateDoc(doc(db, 'staff', s.id), { authUid });
+        // Create missing /users/{uid} doc
+        await setDoc(doc(db, 'users', authUid), {
+          name: s.name,
+          email: newEmail,
+          role: s.role,
+          branchId: s.branchId,
+          staffId: s.id,
+          createdAt: serverTimestamp(),
         });
       }
 
-      // Update Firestore with the new code only — no expiry field
+      // Update Firestore staff code (no expiry — codes never expire)
       await updateDoc(doc(db, 'staff', s.id), { staffCode: newCode });
 
       toast.success(`New code generated: ${newCode}`);
@@ -174,6 +185,8 @@ export default function OwnerStaff() {
     } catch (err) {
       console.error('[OwnerStaff] reset code error:', err);
       toast.error('Failed to reset code. Please try again.');
+    } finally {
+      setResettingId(null);
     }
   };
 
@@ -253,6 +266,13 @@ export default function OwnerStaff() {
                   <td className="px-5 py-3.5">
                     <div className="flex items-center gap-2 justify-end">
                       <button onClick={() => openEdit(s)} className="text-indigo-600 hover:text-indigo-800 font-medium text-xs">Edit</button>
+                      <button
+                        onClick={() => handleResetCode(s)}
+                        disabled={resettingId === s.id}
+                        className="text-amber-600 hover:text-amber-800 font-medium text-xs disabled:opacity-50"
+                      >
+                        {resettingId === s.id ? 'Resetting…' : 'Reset Code'}
+                      </button>
                       {s.isActive ? (
                         <button onClick={() => setDeactivateTarget(s)} className="text-red-500 hover:text-red-700 font-medium text-xs">Deactivate</button>
                       ) : (
