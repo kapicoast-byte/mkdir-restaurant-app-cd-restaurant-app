@@ -42,51 +42,98 @@ function StaffLoginForm() {
     setError('');
     const entered = code.trim().toUpperCase();
 
+    console.log('[StaffLogin] Step 1 — entered code:', entered);
+
     if (!entered) { setError('Please enter your staff code.'); return; }
 
     setSubmitting(true);
+
+    // ── Step 1: Firestore lookup ─────────────────────────────────────────────
+    // This query runs BEFORE the user is authenticated. Firestore security rules
+    // must allow unauthenticated list on /staff for this to work.
+    // Rule to add in Firebase Console if you see permission-denied errors:
+    //   match /staff/{staffId} { allow list: if true; ... }
+    let staffDoc, staffData;
     try {
-      // 1. Look up the staff document by code
+      console.log('[StaffLogin] Step 2 — querying /staff where staffCode ==', entered);
       const snap = await getDocs(
         query(collection(db, 'staff'), where('staffCode', '==', entered), limit(1))
       );
+      console.log('[StaffLogin] Step 3 — query returned', snap.size, 'document(s)');
 
       if (snap.empty) {
+        console.log('[StaffLogin] No document found for code:', entered);
         setError('Invalid code. Please check and try again.');
         setSubmitting(false);
         return;
       }
 
-      const staffDoc = snap.docs[0];
-      const staffData = staffDoc.data();
+      staffDoc  = snap.docs[0];
+      staffData = staffDoc.data();
+      console.log('[StaffLogin] Step 4 — found staff doc id:', staffDoc.id);
+      console.log('[StaffLogin]   isActive:', staffData.isActive);
+      console.log('[StaffLogin]   staffCode field value:', staffData.staffCode);
+      console.log('[StaffLogin]   codeExpiresAt raw:', staffData.codeExpiresAt);
+      console.log('[StaffLogin]   authUid:', staffData.authUid ?? '(none — Auth account may not have been created)');
 
-      // 2. Check account status
-      if (!staffData.isActive) {
-        setError('Your account has been deactivated. Please contact your manager.');
+    } catch (queryErr) {
+      console.error('[StaffLogin] Firestore query failed — code:', queryErr.code, '— message:', queryErr.message);
+      if (queryErr.code === 'permission-denied') {
+        console.error('[StaffLogin] FIX NEEDED: Firestore rules block unauthenticated reads on /staff.');
+        console.error('[StaffLogin] In Firebase Console → Firestore Rules, add to the /staff match block:');
+        console.error('[StaffLogin]   allow list: if true;');
+        setError('System configuration issue. Please contact your manager.');
+      } else {
+        setError('Could not reach the server. Check your connection and try again.');
+      }
+      setSubmitting(false);
+      return;
+    }
+
+    // ── Step 2: Validate the staff record ────────────────────────────────────
+    if (!staffData.isActive) {
+      console.log('[StaffLogin] Account is deactivated');
+      setError('Your account has been deactivated. Please contact your manager.');
+      setSubmitting(false);
+      return;
+    }
+
+    if (staffData.codeExpiresAt) {
+      // codeExpiresAt is stored as a Firestore Timestamp — .toDate() converts it
+      const expiry = staffData.codeExpiresAt?.toDate?.() ?? new Date(staffData.codeExpiresAt);
+      console.log('[StaffLogin] Step 5 — expiry:', expiry.toISOString(), '| now:', new Date().toISOString(), '| expired:', expiry < new Date());
+      if (expiry < new Date()) {
+        setError('Your code has expired. Please contact your manager to get a new one.');
         setSubmitting(false);
         return;
       }
+    }
 
-      // 3. Check code expiry
-      if (staffData.codeExpiresAt) {
-        const expiry = staffData.codeExpiresAt?.toDate?.() ?? new Date(staffData.codeExpiresAt);
-        if (expiry < new Date()) {
-          setError('Your code has expired. Please contact your manager to get a new one.');
-          setSubmitting(false);
-          return;
-        }
-      }
-
-      // 4. Sign into Firebase Auth — email is stable per staff doc ID, password is the code
-      const email = staffAuthEmail(staffDoc.id);
+    // ── Step 3: Firebase Auth sign-in ────────────────────────────────────────
+    // Email is stable (based on Firestore doc ID, never changes).
+    // Password is the STF-XXXX code itself.
+    const email = staffAuthEmail(staffDoc.id);
+    console.log('[StaffLogin] Step 6 — signing into Firebase Auth');
+    console.log('[StaffLogin]   email:', email);
+    console.log('[StaffLogin]   password (entered code):', entered);
+    try {
       await signInWithEmailAndPassword(auth, email, entered);
-      // AuthContext picks up the new session and the redirect above fires
-
-    } catch (err) {
-      // Firebase auth errors (wrong password etc.) surface here if the Auth
-      // account exists but something is mismatched — treat as invalid code
-      console.error('[StaffLogin]', err.code, err.message);
-      setError('Login failed. Please check your code or contact your manager.');
+      console.log('[StaffLogin] Step 7 — Auth sign-in successful. Waiting for AuthContext redirect.');
+      // AuthContext onAuthStateChanged picks up the new session → redirect fires above
+    } catch (authErr) {
+      console.error('[StaffLogin] Firebase Auth sign-in failed — code:', authErr.code, '— message:', authErr.message);
+      if (authErr.code === 'auth/user-not-found' || authErr.code === 'auth/invalid-credential') {
+        console.error('[StaffLogin] The Firebase Auth account for this staff member was not found.');
+        console.error('[StaffLogin] Expected email:', email);
+        console.error('[StaffLogin] The Auth account may need to be recreated — ask the owner to reset the staff code.');
+        setError('Login account not found. Please ask your manager to reset your staff code.');
+      } else if (authErr.code === 'auth/wrong-password') {
+        console.error('[StaffLogin] Password mismatch — the stored code and Auth password are out of sync.');
+        console.error('[StaffLogin] Ask the owner to reset the staff code to re-sync them.');
+        setError('Code mismatch. Please ask your manager to reset your staff code.');
+      } else {
+        setError('Login failed. Please try again or contact your manager.');
+      }
       setSubmitting(false);
     }
   };
