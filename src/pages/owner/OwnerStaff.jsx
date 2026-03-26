@@ -1,31 +1,26 @@
 // Owner: manage all staff across all branches
 //
-// When a staff member is created:
-//   1. Firestore /staff doc is added first (to get the stable doc ID)
-//   2. Firebase Auth account is created via secondary app (no session disruption)
-//      Email: staff-{docId}@staff.restaurant.app  Password: staffCode
-//   3. /staff doc is updated with authUid
-//   4. /users/{uid} doc is created so AuthContext can load the profile
+// Staff creation flow:
+//   1. Client adds /staff Firestore doc (without authUid) to get stable doc ID
+//   2. Calls createStaffAuth Cloud Function with { staffCode, staffId }
+//   3. Function creates Firebase Auth account (Admin SDK) and writes authUid back
+//   4. Function creates /users/{uid} doc
 //
-// When a code is reset:
-//   1. Secondary app signs in as the staff member using the OLD code
-//   2. updatePassword sets the new code as the new password
-//   3. Firestore /staff doc is updated with the new code (no expiry — codes never expire)
-//   4. /users/{uid} email field stays unchanged (email is doc-ID based, not code based)
+// Code reset flow:
+//   1. Calls resetStaffAuth Cloud Function with { staffId }
+//   2. Function generates new STF-XXXX code server-side
+//   3. Function updates or creates Auth account, updates /staff + /users docs
+//   4. Client shows new code in a modal
+//
+// All Auth operations are done server-side via Admin SDK — no secondary-app
+// workarounds, no client-side createUserWithEmailAndPassword.
 import { useEffect, useState } from 'react';
 import {
-  collection, onSnapshot, addDoc, updateDoc, deleteDoc,
-  setDoc, doc, serverTimestamp, query, orderBy
+  collection, onSnapshot, addDoc, updateDoc,
+  doc, serverTimestamp, query, orderBy
 } from 'firebase/firestore';
-import {
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  updatePassword,
-  updateEmail,
-} from 'firebase/auth';
-import { db } from '../../firebase/config';
-import { withSecondaryAuth } from '../../firebase/secondaryAuth';
-import { staffAuthEmail } from '../Login';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from '../../firebase/config';
 import toast from 'react-hot-toast';
 import PageHeader from '../../components/common/PageHeader';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
@@ -35,7 +30,7 @@ import ConfirmDialog from '../../components/common/ConfirmDialog';
 
 const ROLES = ['manager', 'trustedManager', 'staff'];
 
-// Generate unique STF-XXXX code
+// Generate unique STF-XXXX code (client-side, for display before save)
 function generateStaffCode() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   let code = 'STF-';
@@ -95,16 +90,8 @@ export default function OwnerStaff() {
 
       // ── Create new staff member ────────────────────────────────────────────
       const code = generateStaffCode();
-      const email = staffAuthEmail(code);
 
-      // Step 1: Create Firebase Auth account first (fail fast — no Firestore doc yet)
-      //         Uses secondary app so the owner's session is not disturbed
-      const authUid = await withSecondaryAuth(async (tempAuth) => {
-        const cred = await createUserWithEmailAndPassword(tempAuth, email, code);
-        return cred.user.uid;
-      });
-
-      // Step 2: Add Firestore /staff doc with authUid already set
+      // Step 1: Add /staff doc to get a stable ID (authUid filled in by function)
       const staffRef = await addDoc(collection(db, 'staff'), {
         name: form.name.trim(),
         role: form.role,
@@ -112,29 +99,25 @@ export default function OwnerStaff() {
         staffCode: code,
         isActive: true,
         permissionOverrides: {},
-        authUid,
+        authUid: null,
         createdAt: serverTimestamp(),
       });
 
-      // Step 3: Create /users/{uid} so AuthContext can load the profile on login
-      await setDoc(doc(db, 'users', authUid), {
-        name: form.name.trim(),
-        email,
-        role: form.role,
-        branchId: form.branchId,
-        staffId: staffRef.id,
-        createdAt: serverTimestamp(),
-      });
+      // Step 2: Call Cloud Function — Admin SDK creates Auth account and writes
+      //         authUid + /users/{uid} doc server-side
+      const createStaffAuth = httpsCallable(functions, 'createStaffAuth');
+      await createStaffAuth({ staffCode: code, staffId: staffRef.id });
 
       toast.success(`Staff added — code: ${code}`);
+      setCodeViewTarget({ id: staffRef.id, name: form.name.trim(), staffCode: code });
       setModalOpen(false);
 
     } catch (err) {
       console.error('[OwnerStaff] save error:', err);
       toast.error(
-        err.code === 'auth/email-already-in-use'
+        err.code === 'functions/already-exists'
           ? 'A login account for this staff member already exists.'
-          : 'Failed to save staff member.'
+          : `Failed to create staff: ${err.message}`
       );
     } finally {
       setSaving(false);
@@ -142,49 +125,18 @@ export default function OwnerStaff() {
   };
 
   const handleResetCode = async (s) => {
-    const newCode = generateStaffCode();
-    const newEmail = staffAuthEmail(newCode);
     setResettingId(s.id);
-
     try {
-      if (s.authUid) {
-        // Auth account exists — sign in with old credentials, update email + password
-        const oldEmail = staffAuthEmail(s.staffCode);
-        await withSecondaryAuth(async (tempAuth) => {
-          const cred = await signInWithEmailAndPassword(tempAuth, oldEmail, s.staffCode);
-          await updateEmail(cred.user, newEmail);
-          await updatePassword(cred.user, newCode);
-        });
-        // Keep /users/{uid} email field in sync
-        await updateDoc(doc(db, 'users', s.authUid), { email: newEmail });
-      } else {
-        // No Auth account yet (authUid was never written) — create one now
-        const authUid = await withSecondaryAuth(async (tempAuth) => {
-          const cred = await createUserWithEmailAndPassword(tempAuth, newEmail, newCode);
-          return cred.user.uid;
-        });
-        // Write authUid to /staff doc
-        await updateDoc(doc(db, 'staff', s.id), { authUid });
-        // Create missing /users/{uid} doc
-        await setDoc(doc(db, 'users', authUid), {
-          name: s.name,
-          email: newEmail,
-          role: s.role,
-          branchId: s.branchId,
-          staffId: s.id,
-          createdAt: serverTimestamp(),
-        });
-      }
-
-      // Update Firestore staff code (no expiry — codes never expire)
-      await updateDoc(doc(db, 'staff', s.id), { staffCode: newCode });
+      const resetStaffAuth = httpsCallable(functions, 'resetStaffAuth');
+      const result = await resetStaffAuth({ staffId: s.id });
+      const { newCode } = result.data;
 
       toast.success(`New code generated: ${newCode}`);
       setCodeViewTarget({ ...s, staffCode: newCode });
 
     } catch (err) {
       console.error('[OwnerStaff] reset code error:', err);
-      toast.error('Failed to reset code. Please try again.');
+      toast.error(`Failed to reset code: ${err.message}`);
     } finally {
       setResettingId(null);
     }
@@ -349,9 +301,10 @@ export default function OwnerStaff() {
             </p>
             <button
               onClick={() => handleResetCode(codeViewTarget)}
-              className="w-full py-2 text-sm font-medium text-indigo-600 border border-indigo-300 rounded-lg hover:bg-indigo-50 transition-colors"
+              disabled={resettingId === codeViewTarget.id}
+              className="w-full py-2 text-sm font-medium text-indigo-600 border border-indigo-300 rounded-lg hover:bg-indigo-50 transition-colors disabled:opacity-50"
             >
-              Generate New Code
+              {resettingId === codeViewTarget.id ? 'Generating…' : 'Generate New Code'}
             </button>
           </div>
         )}

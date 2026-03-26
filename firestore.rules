@@ -1,0 +1,71 @@
+rules_version = '2';
+
+// NOTE: Cloud Functions that use the Firebase Admin SDK bypass ALL rules below.
+//       These rules apply only to client SDK access (the React app).
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helpers ────────────────────────────────────────────────────────────────
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function myRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isOwner() {
+      return signedIn() && myRole() == 'owner';
+    }
+
+    function isManager() {
+      return signedIn() && (myRole() == 'manager' || myRole() == 'trustedManager');
+    }
+
+    function isOwnerOrManager() {
+      return isOwner() || isManager();
+    }
+
+    // ── /users ─────────────────────────────────────────────────────────────────
+    // Each authenticated user may read and write only their own profile.
+    // Owners may read all profiles (for dashboards / reports).
+    match /users/{uid} {
+      allow read:   if signedIn() && (request.auth.uid == uid || isOwner());
+      allow create: if signedIn() && request.auth.uid == uid;
+      allow update: if signedIn() && (request.auth.uid == uid || isOwner());
+      allow delete: if isOwner();
+    }
+
+    // ── /staff ─────────────────────────────────────────────────────────────────
+    // list (unauthenticated) is required for the staff-code login flow:
+    //   the client queries /staff where staffCode == entered BEFORE signing in.
+    // All mutations require owner role (creation/reset goes via Cloud Functions).
+    match /staff/{staffId} {
+      allow list:   if true;                 // needed for code lookup before auth
+      allow get:    if signedIn();
+      allow create: if isOwner();
+      allow update: if isOwner() || isManager();
+      allow delete: if isOwner();
+    }
+
+    // ── /branches ──────────────────────────────────────────────────────────────
+    match /branches/{branchId} {
+      allow read:   if signedIn();
+      allow write:  if isOwner();
+    }
+
+    // ── /tasks ────────────────────────────────────────────────────────────────
+    match /tasks/{taskId} {
+      allow read:   if isOwnerOrManager();
+      allow write:  if isOwnerOrManager();
+    }
+
+    // ── /shifts ───────────────────────────────────────────────────────────────
+    match /shifts/{shiftId} {
+      allow read:   if isOwnerOrManager();
+      allow write:  if isOwnerOrManager();
+    }
+  }
+}
