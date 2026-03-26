@@ -4,7 +4,7 @@
 //
 // Staff code flow:
 //   1. Query /staff where staffCode == entered code
-//   2. Validate isActive and codeExpiresAt
+//   2. Validate isActive (codes never expire — only reset or deactivation stops access)
 //   3. Sign into Firebase Auth using the stable staff email + code-as-password
 //   4. AuthContext loads /users/{uid} and redirects based on role
 import { useState } from 'react';
@@ -73,7 +73,6 @@ function StaffLoginForm() {
       console.log('[StaffLogin] Step 4 — found staff doc id:', staffDoc.id);
       console.log('[StaffLogin]   isActive:', staffData.isActive);
       console.log('[StaffLogin]   staffCode field value:', staffData.staffCode);
-      console.log('[StaffLogin]   codeExpiresAt raw:', staffData.codeExpiresAt);
       console.log('[StaffLogin]   authUid:', staffData.authUid ?? '(none — Auth account may not have been created)');
 
     } catch (queryErr) {
@@ -96,17 +95,6 @@ function StaffLoginForm() {
       setError('Your account has been deactivated. Please contact your manager.');
       setSubmitting(false);
       return;
-    }
-
-    if (staffData.codeExpiresAt) {
-      // codeExpiresAt is stored as a Firestore Timestamp — .toDate() converts it
-      const expiry = staffData.codeExpiresAt?.toDate?.() ?? new Date(staffData.codeExpiresAt);
-      console.log('[StaffLogin] Step 5 — expiry:', expiry.toISOString(), '| now:', new Date().toISOString(), '| expired:', expiry < new Date());
-      if (expiry < new Date()) {
-        setError('Your code has expired. Please contact your manager to get a new one.');
-        setSubmitting(false);
-        return;
-      }
     }
 
     // ── Step 3: Firebase Auth sign-in ────────────────────────────────────────

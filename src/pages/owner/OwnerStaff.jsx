@@ -10,7 +10,7 @@
 // When a code is reset:
 //   1. Secondary app signs in as the staff member using the OLD code
 //   2. updatePassword sets the new code as the new password
-//   3. Firestore /staff doc is updated with new code + new expiry (90 days)
+//   3. Firestore /staff doc is updated with the new code (no expiry — codes never expire)
 //   4. /users/{uid} email field stays unchanged (email is doc-ID based, not code based)
 import { useEffect, useState } from 'react';
 import {
@@ -34,19 +34,12 @@ import ConfirmDialog from '../../components/common/ConfirmDialog';
 
 const ROLES = ['manager', 'trustedManager', 'staff'];
 
-// Code validity period for new codes and resets
-const CODE_EXPIRY_DAYS = 90;
-
 // Generate unique STF-XXXX code
 function generateStaffCode() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   let code = 'STF-';
   for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
   return code;
-}
-
-function codeExpiryDate() {
-  return new Date(Date.now() + CODE_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
 }
 
 const emptyForm = { name: '', role: 'staff', branchId: '' };
@@ -100,7 +93,6 @@ export default function OwnerStaff() {
 
       // ── Create new staff member ────────────────────────────────────────────
       const code = generateStaffCode();
-      const expiresAt = codeExpiryDate();
 
       // Step 1: Add Firestore /staff doc to get the stable document ID
       const staffRef = await addDoc(collection(db, 'staff'), {
@@ -108,7 +100,6 @@ export default function OwnerStaff() {
         role: form.role,
         branchId: form.branchId,
         staffCode: code,
-        codeExpiresAt: expiresAt,
         isActive: true,
         permissionOverrides: {},
         authUid: null, // filled in after Auth account creation
@@ -160,7 +151,6 @@ export default function OwnerStaff() {
 
   const handleResetCode = async (s) => {
     const newCode = generateStaffCode();
-    const expiresAt = codeExpiryDate();
 
     try {
       // Update Firebase Auth password via secondary app.
@@ -175,14 +165,11 @@ export default function OwnerStaff() {
         });
       }
 
-      // Update Firestore with new code and extended expiry
-      await updateDoc(doc(db, 'staff', s.id), {
-        staffCode: newCode,
-        codeExpiresAt: expiresAt,
-      });
+      // Update Firestore with the new code only — no expiry field
+      await updateDoc(doc(db, 'staff', s.id), { staffCode: newCode });
 
       toast.success(`New code generated: ${newCode}`);
-      setCodeViewTarget({ ...s, staffCode: newCode, codeExpiresAt: expiresAt });
+      setCodeViewTarget({ ...s, staffCode: newCode });
 
     } catch (err) {
       console.error('[OwnerStaff] reset code error:', err);
@@ -336,11 +323,6 @@ export default function OwnerStaff() {
             <div className="bg-gray-50 rounded-lg p-4 text-center">
               <p className="text-xs text-gray-500 mb-1">Code for {codeViewTarget.name}</p>
               <p className="text-3xl font-mono font-bold text-gray-900 tracking-widest">{codeViewTarget.staffCode}</p>
-              {codeViewTarget.codeExpiresAt && (
-                <p className="text-xs text-gray-400 mt-2">
-                  Expires: {new Date(codeViewTarget.codeExpiresAt?.toDate?.() ?? codeViewTarget.codeExpiresAt).toLocaleDateString()}
-                </p>
-              )}
             </div>
             <p className="text-xs text-gray-400 text-center">
               Staff enter this code on the Staff Login tab. The code is also their login password.
