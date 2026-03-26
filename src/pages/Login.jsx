@@ -40,9 +40,12 @@ function StaffLoginForm() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+
+    console.log('Step 1 - Code entered:', code);
+
     const entered = code.trim().toUpperCase();
 
-    console.log('[StaffLogin] Step 1 — entered code:', entered);
+    console.log('Step 2 - Code after trim/uppercase:', entered);
 
     if (!entered) { setError('Please enter your staff code.'); return; }
 
@@ -55,14 +58,14 @@ function StaffLoginForm() {
     //   match /staff/{staffId} { allow list: if true; ... }
     let staffDoc, staffData;
     try {
-      console.log('[StaffLogin] Step 2 — querying /staff where staffCode ==', entered);
+      console.log('Step 3 - Querying Firestore /staff where staffCode ==', entered);
       const snap = await getDocs(
         query(collection(db, 'staff'), where('staffCode', '==', entered), limit(1))
       );
-      console.log('[StaffLogin] Step 3 — query returned', snap.size, 'document(s)');
+      console.log('Step 4 - Documents found:', snap.size);
 
       if (snap.empty) {
-        console.log('[StaffLogin] No document found for code:', entered);
+        console.log('Step 5 - No matching staff document found');
         setError('Invalid code. Please check and try again.');
         setSubmitting(false);
         return;
@@ -70,13 +73,12 @@ function StaffLoginForm() {
 
       staffDoc  = snap.docs[0];
       staffData = staffDoc.data();
-      console.log('[StaffLogin] Step 4 — found staff doc id:', staffDoc.id);
-      console.log('[StaffLogin]   isActive:', staffData.isActive);
-      console.log('[StaffLogin]   staffCode field value:', staffData.staffCode);
-      console.log('[StaffLogin]   authUid:', staffData.authUid ?? '(none — Auth account may not have been created)');
+      console.log('Step 6 - Staff doc data:', staffData);
+      console.log('Step 7 - isActive:', staffData.isActive);
+      console.log('Step 8 - authUid:', staffData.authUid);
 
     } catch (queryErr) {
-      console.error('[StaffLogin] Firestore query failed — code:', queryErr.code, '— message:', queryErr.message);
+      console.log('ERROR caught:', queryErr.code, queryErr.message);
       if (queryErr.code === 'permission-denied') {
         console.error('[StaffLogin] FIX NEEDED: Firestore rules block unauthenticated reads on /staff.');
         console.error('[StaffLogin] In Firebase Console → Firestore Rules, add to the /staff match block:');
@@ -91,7 +93,7 @@ function StaffLoginForm() {
 
     // ── Step 2: Validate the staff record ────────────────────────────────────
     if (!staffData.isActive) {
-      console.log('[StaffLogin] Account is deactivated');
+      console.log('ERROR caught: account-deactivated Your account has been deactivated.');
       setError('Your account has been deactivated. Please contact your manager.');
       setSubmitting(false);
       return;
@@ -101,15 +103,13 @@ function StaffLoginForm() {
     // Email is stable (based on Firestore doc ID, never changes).
     // Password is the STF-XXXX code itself.
     const email = staffAuthEmail(staffDoc.id);
-    console.log('[StaffLogin] Step 6 — signing into Firebase Auth');
-    console.log('[StaffLogin]   email:', email);
-    console.log('[StaffLogin]   password (entered code):', entered);
+    console.log('Step 9 - Attempting Firebase auth sign in');
     try {
       await signInWithEmailAndPassword(auth, email, entered);
-      console.log('[StaffLogin] Step 7 — Auth sign-in successful. Waiting for AuthContext redirect.');
+      console.log('Step 10 - Auth success, redirecting');
       // AuthContext onAuthStateChanged picks up the new session → redirect fires above
     } catch (authErr) {
-      console.error('[StaffLogin] Firebase Auth sign-in failed — code:', authErr.code, '— message:', authErr.message);
+      console.log('ERROR caught:', authErr.code, authErr.message);
       if (authErr.code === 'auth/user-not-found' || authErr.code === 'auth/invalid-credential') {
         console.error('[StaffLogin] The Firebase Auth account for this staff member was not found.');
         console.error('[StaffLogin] Expected email:', email);
