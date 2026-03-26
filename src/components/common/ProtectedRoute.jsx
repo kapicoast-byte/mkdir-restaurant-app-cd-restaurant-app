@@ -1,7 +1,14 @@
-// Redirects unauthenticated users to /login
-// Optionally restricts to specific roles
+// Redirects unauthenticated users to /login.
+// If allowedRoles is provided and the user's role doesn't match,
+// redirects them to their correct dashboard instead.
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+
+function dashboardForRole(role) {
+  if (role === 'owner') return '/owner/dashboard';
+  if (role === 'manager' || role === 'trustedManager') return '/manager/dashboard';
+  return '/staff/dashboard';
+}
 
 export default function ProtectedRoute({ children, allowedRoles }) {
   const { user, userProfile, loading } = useAuth();
@@ -17,9 +24,7 @@ export default function ProtectedRoute({ children, allowedRoles }) {
   if (!user) return <Navigate to="/login" replace />;
 
   if (allowedRoles && userProfile && !allowedRoles.includes(userProfile.role)) {
-    // Redirect to their proper dashboard if role doesn't match
-    if (userProfile.role === 'owner') return <Navigate to="/owner/dashboard" replace />;
-    return <Navigate to="/manager/dashboard" replace />;
+    return <Navigate to={dashboardForRole(userProfile.role)} replace />;
   }
 
   return children;

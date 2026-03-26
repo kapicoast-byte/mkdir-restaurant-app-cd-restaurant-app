@@ -1,10 +1,30 @@
 // Owner: manage all staff across all branches
+//
+// When a staff member is created:
+//   1. Firestore /staff doc is added first (to get the stable doc ID)
+//   2. Firebase Auth account is created via secondary app (no session disruption)
+//      Email: staff-{docId}@staff.restaurant.app  Password: staffCode
+//   3. /staff doc is updated with authUid
+//   4. /users/{uid} doc is created so AuthContext can load the profile
+//
+// When a code is reset:
+//   1. Secondary app signs in as the staff member using the OLD code
+//   2. updatePassword sets the new code as the new password
+//   3. Firestore /staff doc is updated with new code + new expiry (90 days)
+//   4. /users/{uid} email field stays unchanged (email is doc-ID based, not code based)
 import { useEffect, useState } from 'react';
 import {
   collection, onSnapshot, addDoc, updateDoc, deleteDoc,
-  doc, serverTimestamp, query, orderBy
+  setDoc, doc, serverTimestamp, query, orderBy
 } from 'firebase/firestore';
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  updatePassword,
+} from 'firebase/auth';
 import { db } from '../../firebase/config';
+import { withSecondaryAuth } from '../../firebase/secondaryAuth';
+import { staffAuthEmail } from '../Login';
 import toast from 'react-hot-toast';
 import PageHeader from '../../components/common/PageHeader';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
@@ -14,12 +34,19 @@ import ConfirmDialog from '../../components/common/ConfirmDialog';
 
 const ROLES = ['manager', 'trustedManager', 'staff'];
 
+// Code validity period for new codes and resets
+const CODE_EXPIRY_DAYS = 90;
+
 // Generate unique STF-XXXX code
 function generateStaffCode() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   let code = 'STF-';
   for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
   return code;
+}
+
+function codeExpiryDate() {
+  return new Date(Date.now() + CODE_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
 }
 
 const emptyForm = { name: '', role: 'staff', branchId: '' };
@@ -60,45 +87,106 @@ export default function OwnerStaff() {
     setSaving(true);
     try {
       if (editTarget) {
+        // Edit: only name, role, branchId change — code and auth are unaffected
         await updateDoc(doc(db, 'staff', editTarget.id), {
           name: form.name.trim(),
           role: form.role,
           branchId: form.branchId,
         });
         toast.success('Staff updated');
-      } else {
-        const code = generateStaffCode();
-        // Code expires in 7 days
-        const codeExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-        await addDoc(collection(db, 'staff'), {
-          name: form.name.trim(),
-          role: form.role,
-          branchId: form.branchId,
-          staffCode: code,
-          codeExpiresAt: codeExpiresAt,
-          isActive: true,
-          permissionOverrides: {},
-          createdAt: serverTimestamp(),
-        });
-        toast.success(`Staff added — code: ${code}`);
+        setModalOpen(false);
+        return;
       }
+
+      // ── Create new staff member ────────────────────────────────────────────
+      const code = generateStaffCode();
+      const expiresAt = codeExpiryDate();
+
+      // Step 1: Add Firestore /staff doc to get the stable document ID
+      const staffRef = await addDoc(collection(db, 'staff'), {
+        name: form.name.trim(),
+        role: form.role,
+        branchId: form.branchId,
+        staffCode: code,
+        codeExpiresAt: expiresAt,
+        isActive: true,
+        permissionOverrides: {},
+        authUid: null, // filled in after Auth account creation
+        createdAt: serverTimestamp(),
+      });
+
+      // Step 2: Create Firebase Auth account using the stable email (doc-ID based)
+      //         Uses secondary app so the owner's session is not disturbed
+      let authUid;
+      try {
+        const email = staffAuthEmail(staffRef.id);
+        authUid = await withSecondaryAuth(async (tempAuth) => {
+          const cred = await createUserWithEmailAndPassword(tempAuth, email, code);
+          return cred.user.uid;
+        });
+      } catch (authErr) {
+        // Clean up the orphaned Firestore doc if Auth creation failed
+        await deleteDoc(staffRef);
+        throw authErr;
+      }
+
+      // Step 3: Write authUid back to the staff doc
+      await updateDoc(staffRef, { authUid });
+
+      // Step 4: Create /users/{uid} so AuthContext can load the profile on login
+      await setDoc(doc(db, 'users', authUid), {
+        name: form.name.trim(),
+        email: staffAuthEmail(staffRef.id),
+        role: form.role,
+        branchId: form.branchId,
+        staffId: staffRef.id,
+        createdAt: serverTimestamp(),
+      });
+
+      toast.success(`Staff added — code: ${code}`);
       setModalOpen(false);
-    } catch {
-      toast.error('Failed to save staff member');
+
+    } catch (err) {
+      console.error('[OwnerStaff] save error:', err);
+      toast.error(
+        err.code === 'auth/email-already-in-use'
+          ? 'A login account for this staff member already exists.'
+          : 'Failed to save staff member.'
+      );
     } finally {
       setSaving(false);
     }
   };
 
   const handleResetCode = async (s) => {
-    const code = generateStaffCode();
-    const codeExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const newCode = generateStaffCode();
+    const expiresAt = codeExpiryDate();
+
     try {
-      await updateDoc(doc(db, 'staff', s.id), { staffCode: code, codeExpiresAt });
-      toast.success(`New code generated: ${code}`);
-      setCodeViewTarget({ ...s, staffCode: code });
-    } catch {
-      toast.error('Failed to reset code');
+      // Update Firebase Auth password via secondary app.
+      // Sign in with the OLD code (current password) then update to the new one.
+      // Only possible if the Auth account was previously created (authUid exists).
+      if (s.authUid) {
+        const email = staffAuthEmail(s.id);
+        const oldCode = s.staffCode;
+        await withSecondaryAuth(async (tempAuth) => {
+          const cred = await signInWithEmailAndPassword(tempAuth, email, oldCode);
+          await updatePassword(cred.user, newCode);
+        });
+      }
+
+      // Update Firestore with new code and extended expiry
+      await updateDoc(doc(db, 'staff', s.id), {
+        staffCode: newCode,
+        codeExpiresAt: expiresAt,
+      });
+
+      toast.success(`New code generated: ${newCode}`);
+      setCodeViewTarget({ ...s, staffCode: newCode, codeExpiresAt: expiresAt });
+
+    } catch (err) {
+      console.error('[OwnerStaff] reset code error:', err);
+      toast.error('Failed to reset code. Please try again.');
     }
   };
 
@@ -227,17 +315,22 @@ export default function OwnerStaff() {
               {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
           </div>
+          {!editTarget && (
+            <p className="text-xs text-gray-400 bg-gray-50 rounded-lg px-3 py-2">
+              A Firebase Auth account and STF-XXXX login code will be generated automatically.
+            </p>
+          )}
           <div className="flex gap-3 justify-end pt-2">
             <button type="button" onClick={() => setModalOpen(false)} className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">Cancel</button>
             <button type="submit" disabled={saving} className="px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-60">
-              {saving ? 'Saving...' : 'Save'}
+              {saving ? 'Creating…' : 'Save'}
             </button>
           </div>
         </form>
       </Modal>
 
       {/* Staff Code Modal */}
-      <Modal isOpen={!!codeViewTarget} onClose={() => setCodeViewTarget(null)} title="Staff ID Code" size="sm">
+      <Modal isOpen={!!codeViewTarget} onClose={() => setCodeViewTarget(null)} title="Staff Login Code" size="sm">
         {codeViewTarget && (
           <div className="space-y-4">
             <div className="bg-gray-50 rounded-lg p-4 text-center">
@@ -249,6 +342,9 @@ export default function OwnerStaff() {
                 </p>
               )}
             </div>
+            <p className="text-xs text-gray-400 text-center">
+              Staff enter this code on the Staff Login tab. The code is also their login password.
+            </p>
             <button
               onClick={() => handleResetCode(codeViewTarget)}
               className="w-full py-2 text-sm font-medium text-indigo-600 border border-indigo-300 rounded-lg hover:bg-indigo-50 transition-colors"
@@ -263,7 +359,7 @@ export default function OwnerStaff() {
       <ConfirmDialog
         isOpen={!!deactivateTarget}
         title="Deactivate Staff Member"
-        message={`Are you sure you want to deactivate ${deactivateTarget?.name}? They will no longer appear in active lists.`}
+        message={`Are you sure you want to deactivate ${deactivateTarget?.name}? They will no longer be able to log in.`}
         confirmLabel="Deactivate"
         danger
         onConfirm={handleDeactivate}

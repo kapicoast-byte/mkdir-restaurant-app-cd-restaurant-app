@@ -23,8 +23,12 @@ import ManagerStaff from './pages/manager/ManagerStaff';
 import Shifts from './pages/manager/Shifts';
 import CheckIns from './pages/manager/CheckIns';
 
-const OWNER_ROLES = ['owner'];
+// Staff pages
+import StaffDashboard from './pages/staff/StaffDashboard';
+
+const OWNER_ROLES   = ['owner'];
 const MANAGER_ROLES = ['manager', 'trustedManager'];
+const STAFF_ROLES   = ['staff'];
 
 export default function App() {
   return (
@@ -79,7 +83,17 @@ export default function App() {
             <Route path="checkins" element={<CheckIns />} />
           </Route>
 
-          {/* Default redirect — /login handles the rest after auth check */}
+          {/* Staff routes — placeholder until Phase 2 */}
+          <Route
+            path="/staff/dashboard"
+            element={
+              <ProtectedRoute allowedRoles={STAFF_ROLES}>
+                <StaffDashboard />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Default redirect */}
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </BrowserRouter>
