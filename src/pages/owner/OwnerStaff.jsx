@@ -164,49 +164,76 @@ export default function OwnerStaff() {
   };
 
   // ── Reset Code ────────────────────────────────────────────────────────────────
+  // Strategy: always try to create fresh first, fall back to update, fall back to
+  // collision-safe create. This handles every possible Auth account state.
   const handleResetCode = async (s) => {
     setResettingId(s.id);
     try {
       const newCode  = generateStaffCode();
       const newEmail = staffAuthEmail(newCode);
-      let   uid      = s.authUid ?? null;
+      let   uid      = null;
 
-      if (uid) {
-        // Auth account exists — re-authenticate then update email + password
-        const oldEmail = staffAuthEmail(s.staffCode);
-        try {
-          const cred = await signInWithEmailAndPassword(secondaryAuth, oldEmail, s.staffCode);
-          await updateEmail(cred.user, newEmail);
-          await updatePassword(cred.user, newCode);
-        } finally {
-          await signOut(secondaryAuth).catch(() => {});
-        }
-        // Keep /users/{uid} email field in sync
-        await updateDoc(doc(db, 'users', uid), { email: newEmail });
-
-      } else {
-        // No Auth account yet — create one now
-        try {
-          const cred = await createUserWithEmailAndPassword(secondaryAuth, newEmail, newCode);
-          uid = cred.user.uid;
-        } finally {
-          await signOut(secondaryAuth).catch(() => {});
-        }
-        // Create the missing /users/{uid} doc
-        await setDoc(doc(db, 'users', uid), {
-          name:      s.name,
-          email:     newEmail,
-          role:      s.role,
-          branchId:  s.branchId,
-          staffId:   s.id,
-          createdAt: serverTimestamp(),
-        });
+      // ── STEP A: Try creating a brand-new Auth account ──────────────────────
+      // Succeeds when no Auth account exists for this email (most common for
+      // legacy staff like "jayanth" whose authUid was never set properly).
+      let stepAFailed = false;
+      try {
+        const cred = await createUserWithEmailAndPassword(secondaryAuth, newEmail, newCode);
+        uid = cred.user.uid;
+        console.log('[ResetCode] Step A success — new account created, uid:', uid);
+      } catch (createErr) {
+        stepAFailed = true;
+        console.log('[ResetCode] Step A failed:', createErr.code);
+      } finally {
+        await signOut(secondaryAuth).catch(() => {});
       }
 
-      // Update /staff doc — codes never expire, only reset or deactivation stops access
+      // ── STEP B: Account already exists — try sign-in then update ──────────
+      if (stepAFailed) {
+        const oldEmail = staffAuthEmail(s.staffCode);
+        let stepBFailed = false;
+        try {
+          const cred = await signInWithEmailAndPassword(secondaryAuth, oldEmail, s.staffCode);
+          uid = cred.user.uid;
+          await updateEmail(cred.user, newEmail);
+          await updatePassword(cred.user, newCode);
+          console.log('[ResetCode] Step B success — account updated, uid:', uid);
+        } catch (signInErr) {
+          stepBFailed = true;
+          console.log('[ResetCode] Step B failed:', signInErr.code);
+        } finally {
+          await signOut(secondaryAuth).catch(() => {});
+        }
+
+        // ── STEP B2: Sign-in failed — create with collision-safe email ───────
+        if (stepBFailed) {
+          const safeEmail = `${newCode.toLowerCase()}-${Date.now()}@staff.restaurant.app`;
+          try {
+            const cred = await createUserWithEmailAndPassword(secondaryAuth, safeEmail, newCode);
+            uid = cred.user.uid;
+            console.log('[ResetCode] Step B2 — collision-safe account created, uid:', uid);
+          } finally {
+            await signOut(secondaryAuth).catch(() => {});
+          }
+        }
+      }
+
+      if (!uid) throw new Error('Could not obtain a valid Auth uid after all steps');
+
+      // ── STEP C: Update Firestore ───────────────────────────────────────────
       await updateDoc(doc(db, 'staff', s.id), { staffCode: newCode, authUid: uid });
 
-      // Show the new code to the owner
+      // Upsert /users/{uid} (handles both new uid and existing uid)
+      await setDoc(doc(db, 'users', uid), {
+        name:      s.name,
+        email:     newEmail,
+        role:      s.role,
+        branchId:  s.branchId,
+        staffId:   s.id,
+        createdAt: serverTimestamp(),
+      }, { merge: true });
+
+      // Show new code to owner
       setCodeViewTarget({ ...s, staffCode: newCode, authUid: uid });
       toast.success('Code reset successfully');
 
