@@ -1,12 +1,16 @@
-// Email + password login for owners and managers
+// Email + password login for owners and managers.
+// On first load, useFirstTimeSetup silently checks for existing users and
+// creates the default owner account if none are found.
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useFirstTimeSetup } from '../hooks/useFirstTimeSetup';
 import toast from 'react-hot-toast';
 
 export default function Login() {
   const { login, userProfile, loading } = useAuth();
   const navigate = useNavigate();
+  const settingUp = useFirstTimeSetup();
   const [form, setForm] = useState({ email: '', password: '' });
   const [submitting, setSubmitting] = useState(false);
 
@@ -17,7 +21,7 @@ export default function Login() {
     setSubmitting(true);
     try {
       await login(form.email.trim(), form.password);
-      // Navigation handled by useEffect once userProfile loads
+      // Navigation handled below once userProfile loads
     } catch (err) {
       const msg =
         err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password'
@@ -30,12 +34,32 @@ export default function Login() {
     }
   };
 
-  // Redirect after profile loads
-  if (!loading && userProfile) {
+  // Only redirect after setup is complete — prevents a premature navigate
+  // triggered by the temporary auto-signin during first-time account creation.
+  if (!settingUp && !loading && userProfile) {
     const dest = userProfile.role === 'owner' ? '/owner/dashboard' : '/manager/dashboard';
     navigate(dest, { replace: true });
   }
 
+  // ── "Setting up…" screen ────────────────────────────────────────────────
+  if (settingUp) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
+        <div className="text-center">
+          <div className="inline-flex items-center justify-center w-14 h-14 bg-indigo-600 rounded-2xl mb-6">
+            <span className="text-white text-2xl font-bold">R</span>
+          </div>
+          <h1 className="text-2xl font-bold text-white mb-2">RestaurantOS</h1>
+          <div className="flex items-center justify-center gap-2 text-gray-400 text-sm">
+            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-indigo-400" />
+            Setting up…
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Login form ───────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
