@@ -1,26 +1,37 @@
 // Owner: manage all staff across all branches
 //
-// Staff creation flow:
-//   1. Client adds /staff Firestore doc (without authUid) to get stable doc ID
-//   2. Calls createStaffAuth Cloud Function with { staffCode, staffId }
-//   3. Function creates Firebase Auth account (Admin SDK) and writes authUid back
-//   4. Function creates /users/{uid} doc
+// HOW STAFF AUTH WORKS
+// ─────────────────────
+// Firebase Auth does not allow one signed-in user to create another — so we
+// use a persistent secondary Firebase app instance (secondaryAuth) that runs
+// alongside the owner's primary session without affecting it.
 //
-// Code reset flow:
-//   1. Calls resetStaffAuth Cloud Function with { staffId }
-//   2. Function generates new STF-XXXX code server-side
-//   3. Function updates or creates Auth account, updates /staff + /users docs
-//   4. Client shows new code in a modal
+// Create staff flow:
+//   1. Save /staff Firestore doc (no authUid yet)
+//   2. createUserWithEmailAndPassword(secondaryAuth, email, code) → uid
+//   3. signOut(secondaryAuth)  ← always clean up immediately
+//   4. updateDoc /staff/{id} { authUid: uid }
+//   5. setDoc /users/{uid}     ← AuthContext reads this on login
+//   6. Show the STF-XXXX code to owner in a modal
 //
-// All Auth operations are done server-side via Admin SDK — no secondary-app
-// workarounds, no client-side createUserWithEmailAndPassword.
+// Reset code flow:
+//   • If authUid exists:  signIn(secondaryAuth) → updateEmail + updatePassword → signOut
+//   • If authUid missing: createUser(secondaryAuth) → signOut → get uid
+//   • updateDoc /staff/{id} { staffCode, authUid }
+//   • Show new code to owner in a modal with copy button
 import { useEffect, useState } from 'react';
 import {
-  collection, onSnapshot, addDoc, updateDoc,
-  doc, serverTimestamp, query, orderBy
+  collection, onSnapshot, addDoc, updateDoc, setDoc,
+  doc, serverTimestamp, query, orderBy, getDoc
 } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
-import { db, functions } from '../../firebase/config';
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  updatePassword,
+  updateEmail,
+  signOut,
+} from 'firebase/auth';
+import { db, secondaryAuth } from '../../firebase/config';
 import toast from 'react-hot-toast';
 import PageHeader from '../../components/common/PageHeader';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
@@ -30,7 +41,11 @@ import ConfirmDialog from '../../components/common/ConfirmDialog';
 
 const ROLES = ['manager', 'trustedManager', 'staff'];
 
-// Generate unique STF-XXXX code (client-side, for display before save)
+// Derives stable Firebase Auth email from STF-XXXX code
+function staffAuthEmail(staffCode) {
+  return `${staffCode.toLowerCase()}@staff.restaurant.app`;
+}
+
 function generateStaffCode() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   let code = 'STF-';
@@ -41,21 +56,25 @@ function generateStaffCode() {
 const emptyForm = { name: '', role: 'staff', branchId: '' };
 
 export default function OwnerStaff() {
-  const [staff, setStaff] = useState([]);
-  const [branches, setBranches] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editTarget, setEditTarget] = useState(null);
-  const [form, setForm] = useState(emptyForm);
-  const [saving, setSaving] = useState(false);
+  const [staff, setStaff]               = useState([]);
+  const [branches, setBranches]         = useState([]);
+  const [loading, setLoading]           = useState(true);
+  const [modalOpen, setModalOpen]       = useState(false);
+  const [editTarget, setEditTarget]     = useState(null);
+  const [form, setForm]                 = useState(emptyForm);
+  const [saving, setSaving]             = useState(false);
   const [deactivateTarget, setDeactivateTarget] = useState(null);
-  const [codeViewTarget, setCodeViewTarget] = useState(null);
-  const [resettingId, setResettingId] = useState(null);
+  const [codeViewTarget, setCodeViewTarget]     = useState(null);
+  const [resettingId, setResettingId]   = useState(null);
+  const [copied, setCopied]             = useState(false);
 
   useEffect(() => {
     const unsubStaff = onSnapshot(
       query(collection(db, 'staff'), orderBy('name')),
-      (snap) => { setStaff(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); setLoading(false); }
+      (snap) => {
+        setStaff(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setLoading(false);
+      }
     );
     const unsubBranches = onSnapshot(collection(db, 'branches'), (snap) =>
       setBranches(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
@@ -65,19 +84,19 @@ export default function OwnerStaff() {
 
   const branchName = (id) => branches.find((b) => b.id === id)?.name ?? '—';
 
-  const openAdd = () => { setEditTarget(null); setForm(emptyForm); setModalOpen(true); };
+  const openAdd  = () => { setEditTarget(null); setForm(emptyForm); setModalOpen(true); };
   const openEdit = (s) => {
     setEditTarget(s);
     setForm({ name: s.name, role: s.role, branchId: s.branchId });
     setModalOpen(true);
   };
 
+  // ── Create / Edit ────────────────────────────────────────────────────────────
   const handleSave = async (e) => {
     e.preventDefault();
     setSaving(true);
     try {
       if (editTarget) {
-        // Edit: only name, role, branchId change — code and auth are unaffected
         await updateDoc(doc(db, 'staff', editTarget.id), {
           name: form.name.trim(),
           role: form.role,
@@ -88,35 +107,55 @@ export default function OwnerStaff() {
         return;
       }
 
-      // ── Create new staff member ────────────────────────────────────────────
-      const code = generateStaffCode();
+      // ── New staff member ──────────────────────────────────────────────────
+      const code  = generateStaffCode();
+      const email = staffAuthEmail(code);
 
-      // Step 1: Add /staff doc to get a stable ID (authUid filled in by function)
+      // 1. Save to Firestore first to get a stable doc ID
       const staffRef = await addDoc(collection(db, 'staff'), {
-        name: form.name.trim(),
-        role: form.role,
-        branchId: form.branchId,
-        staffCode: code,
-        isActive: true,
+        name:               form.name.trim(),
+        role:               form.role,
+        branchId:           form.branchId,
+        staffCode:          code,
+        isActive:           true,
         permissionOverrides: {},
-        authUid: null,
+        authUid:            null,
+        createdAt:          serverTimestamp(),
+      });
+
+      // 2. Create Firebase Auth account using secondary app
+      let uid;
+      try {
+        const cred = await createUserWithEmailAndPassword(secondaryAuth, email, code);
+        uid = cred.user.uid;
+      } finally {
+        // Always sign out secondary — never leave it signed in
+        await signOut(secondaryAuth).catch(() => {});
+      }
+
+      // 3. Link authUid back to the staff doc
+      await updateDoc(doc(db, 'staff', staffRef.id), { authUid: uid });
+
+      // 4. Create /users/{uid} so AuthContext can load the profile on login
+      await setDoc(doc(db, 'users', uid), {
+        name:      form.name.trim(),
+        email,
+        role:      form.role,
+        branchId:  form.branchId,
+        staffId:   staffRef.id,
         createdAt: serverTimestamp(),
       });
 
-      // Step 2: Call Cloud Function — Admin SDK creates Auth account and writes
-      //         authUid + /users/{uid} doc server-side
-      const createStaffAuth = httpsCallable(functions, 'createStaffAuth');
-      await createStaffAuth({ staffCode: code, staffId: staffRef.id });
-
-      toast.success(`Staff added — code: ${code}`);
-      setCodeViewTarget({ id: staffRef.id, name: form.name.trim(), staffCode: code });
+      // 5. Show the code to the owner
       setModalOpen(false);
+      setCodeViewTarget({ id: staffRef.id, name: form.name.trim(), staffCode: code });
+      toast.success('Staff member created');
 
     } catch (err) {
-      console.error('[OwnerStaff] save error:', err);
+      console.error('[OwnerStaff] create error:', err);
       toast.error(
-        err.code === 'functions/already-exists'
-          ? 'A login account for this staff member already exists.'
+        err.code === 'auth/email-already-in-use'
+          ? 'A login account for this code already exists. Try again (a new code will be generated).'
           : `Failed to create staff: ${err.message}`
       );
     } finally {
@@ -124,15 +163,52 @@ export default function OwnerStaff() {
     }
   };
 
+  // ── Reset Code ────────────────────────────────────────────────────────────────
   const handleResetCode = async (s) => {
     setResettingId(s.id);
     try {
-      const resetStaffAuth = httpsCallable(functions, 'resetStaffAuth');
-      const result = await resetStaffAuth({ staffId: s.id });
-      const { newCode } = result.data;
+      const newCode  = generateStaffCode();
+      const newEmail = staffAuthEmail(newCode);
+      let   uid      = s.authUid ?? null;
 
-      toast.success(`New code generated: ${newCode}`);
-      setCodeViewTarget({ ...s, staffCode: newCode });
+      if (uid) {
+        // Auth account exists — re-authenticate then update email + password
+        const oldEmail = staffAuthEmail(s.staffCode);
+        try {
+          const cred = await signInWithEmailAndPassword(secondaryAuth, oldEmail, s.staffCode);
+          await updateEmail(cred.user, newEmail);
+          await updatePassword(cred.user, newCode);
+        } finally {
+          await signOut(secondaryAuth).catch(() => {});
+        }
+        // Keep /users/{uid} email field in sync
+        await updateDoc(doc(db, 'users', uid), { email: newEmail });
+
+      } else {
+        // No Auth account yet — create one now
+        try {
+          const cred = await createUserWithEmailAndPassword(secondaryAuth, newEmail, newCode);
+          uid = cred.user.uid;
+        } finally {
+          await signOut(secondaryAuth).catch(() => {});
+        }
+        // Create the missing /users/{uid} doc
+        await setDoc(doc(db, 'users', uid), {
+          name:      s.name,
+          email:     newEmail,
+          role:      s.role,
+          branchId:  s.branchId,
+          staffId:   s.id,
+          createdAt: serverTimestamp(),
+        });
+      }
+
+      // Update /staff doc — codes never expire, only reset or deactivation stops access
+      await updateDoc(doc(db, 'staff', s.id), { staffCode: newCode, authUid: uid });
+
+      // Show the new code to the owner
+      setCodeViewTarget({ ...s, staffCode: newCode, authUid: uid });
+      toast.success('Code reset successfully');
 
     } catch (err) {
       console.error('[OwnerStaff] reset code error:', err);
@@ -142,6 +218,7 @@ export default function OwnerStaff() {
     }
   };
 
+  // ── Deactivate / Reactivate ───────────────────────────────────────────────────
   const handleDeactivate = async () => {
     try {
       await updateDoc(doc(db, 'staff', deactivateTarget.id), { isActive: false });
@@ -160,6 +237,14 @@ export default function OwnerStaff() {
     } catch {
       toast.error('Failed to reactivate');
     }
+  };
+
+  // ── Copy code to clipboard ────────────────────────────────────────────────────
+  const copyCode = (code) => {
+    navigator.clipboard.writeText(code).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
   };
 
   if (loading) return <LoadingSpinner message="Loading staff..." />;
@@ -217,7 +302,12 @@ export default function OwnerStaff() {
                   </td>
                   <td className="px-5 py-3.5">
                     <div className="flex items-center gap-2 justify-end">
-                      <button onClick={() => openEdit(s)} className="text-indigo-600 hover:text-indigo-800 font-medium text-xs">Edit</button>
+                      <button
+                        onClick={() => openEdit(s)}
+                        className="text-indigo-600 hover:text-indigo-800 font-medium text-xs"
+                      >
+                        Edit
+                      </button>
                       <button
                         onClick={() => handleResetCode(s)}
                         disabled={resettingId === s.id}
@@ -226,9 +316,19 @@ export default function OwnerStaff() {
                         {resettingId === s.id ? 'Resetting…' : 'Reset Code'}
                       </button>
                       {s.isActive ? (
-                        <button onClick={() => setDeactivateTarget(s)} className="text-red-500 hover:text-red-700 font-medium text-xs">Deactivate</button>
+                        <button
+                          onClick={() => setDeactivateTarget(s)}
+                          className="text-red-500 hover:text-red-700 font-medium text-xs"
+                        >
+                          Deactivate
+                        </button>
                       ) : (
-                        <button onClick={() => handleReactivate(s)} className="text-green-600 hover:text-green-800 font-medium text-xs">Reactivate</button>
+                        <button
+                          onClick={() => handleReactivate(s)}
+                          className="text-green-600 hover:text-green-800 font-medium text-xs"
+                        >
+                          Reactivate
+                        </button>
                       )}
                     </div>
                   </td>
@@ -240,7 +340,12 @@ export default function OwnerStaff() {
       )}
 
       {/* Add / Edit Modal */}
-      <Modal isOpen={modalOpen} onClose={() => setModalOpen(false)} title={editTarget ? 'Edit Staff' : 'Add Staff'} size="sm">
+      <Modal
+        isOpen={modalOpen}
+        onClose={() => setModalOpen(false)}
+        title={editTarget ? 'Edit Staff' : 'Add Staff'}
+        size="sm"
+      >
         <form onSubmit={handleSave} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
@@ -280,32 +385,58 @@ export default function OwnerStaff() {
             </p>
           )}
           <div className="flex gap-3 justify-end pt-2">
-            <button type="button" onClick={() => setModalOpen(false)} className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">Cancel</button>
-            <button type="submit" disabled={saving} className="px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-60">
+            <button
+              type="button"
+              onClick={() => setModalOpen(false)}
+              className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-60"
+            >
               {saving ? 'Creating…' : 'Save'}
             </button>
           </div>
         </form>
       </Modal>
 
-      {/* Staff Code Modal */}
-      <Modal isOpen={!!codeViewTarget} onClose={() => setCodeViewTarget(null)} title="Staff Login Code" size="sm">
+      {/* Staff Code Modal — shown after create and after reset */}
+      <Modal
+        isOpen={!!codeViewTarget}
+        onClose={() => { setCodeViewTarget(null); setCopied(false); }}
+        title="Staff Login Code"
+        size="sm"
+      >
         {codeViewTarget && (
           <div className="space-y-4">
             <div className="bg-gray-50 rounded-lg p-4 text-center">
               <p className="text-xs text-gray-500 mb-1">Code for {codeViewTarget.name}</p>
-              <p className="text-3xl font-mono font-bold text-gray-900 tracking-widest">{codeViewTarget.staffCode}</p>
+              <p className="text-3xl font-mono font-bold text-gray-900 tracking-widest">
+                {codeViewTarget.staffCode}
+              </p>
             </div>
             <p className="text-xs text-gray-400 text-center">
-              Staff enter this code on the Staff Login tab. The code is also their login password.
+              Staff enter this code on the Staff Login tab. The code is also their password.
+              Codes never expire — only reset or deactivation stops access.
             </p>
-            <button
-              onClick={() => handleResetCode(codeViewTarget)}
-              disabled={resettingId === codeViewTarget.id}
-              className="w-full py-2 text-sm font-medium text-indigo-600 border border-indigo-300 rounded-lg hover:bg-indigo-50 transition-colors disabled:opacity-50"
-            >
-              {resettingId === codeViewTarget.id ? 'Generating…' : 'Generate New Code'}
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => copyCode(codeViewTarget.staffCode)}
+                className="flex-1 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
+              >
+                {copied ? 'Copied!' : 'Copy Code'}
+              </button>
+              <button
+                onClick={() => handleResetCode(codeViewTarget)}
+                disabled={resettingId === codeViewTarget.id}
+                className="flex-1 py-2 text-sm font-medium text-indigo-600 border border-indigo-300 rounded-lg hover:bg-indigo-50 transition-colors disabled:opacity-50"
+              >
+                {resettingId === codeViewTarget.id ? 'Generating…' : 'Generate New Code'}
+              </button>
+            </div>
           </div>
         )}
       </Modal>

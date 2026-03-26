@@ -9,7 +9,7 @@
 //   4. AuthContext loads /users/{uid} and redirects based on role
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, query, where, getDocs, limit } from 'firebase/firestore';
+import { collection, query, where, getDocs, limit, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth, db } from '../firebase/config';
 import { useAuth } from '../context/AuthContext';
@@ -100,24 +100,41 @@ function StaffLoginForm() {
     }
 
     // ── Step 3: Firebase Auth sign-in ────────────────────────────────────────
-    // Email is stable (based on Firestore doc ID, never changes).
-    // Password is the STF-XXXX code itself.
+    // Email: staffCode.toLowerCase()@staff.restaurant.app
+    // Password: the STF-XXXX code itself
     const email = staffAuthEmail(entered);
-    console.log('Step 9 - Attempting Firebase auth sign in');
+    console.log('Step 9 - Attempting Firebase auth sign in with email:', email);
     try {
-      await signInWithEmailAndPassword(auth, email, entered);
-      console.log('Step 10 - Auth success, redirecting');
+      const cred = await signInWithEmailAndPassword(auth, email, entered);
+      console.log('Step 10 - Auth success, uid:', cred.user.uid);
+
+      // ── Step 4: Ensure /users/{uid} exists ─────────────────────────────────
+      // If it was never written (legacy record or creation race), create it now
+      // so AuthContext can load the profile and redirect correctly.
+      const uid      = cred.user.uid;
+      const userSnap = await getDoc(doc(db, 'users', uid));
+      if (!userSnap.exists()) {
+        console.log('Step 11 - /users doc missing, creating from staff document');
+        await setDoc(doc(db, 'users', uid), {
+          name:      staffData.name,
+          email,
+          role:      staffData.role,
+          branchId:  staffData.branchId,
+          staffId:   staffDoc.id,
+          createdAt: serverTimestamp(),
+        });
+      }
       // AuthContext onAuthStateChanged picks up the new session → redirect fires above
+
     } catch (authErr) {
       console.log('ERROR caught:', authErr.code, authErr.message);
       if (authErr.code === 'auth/user-not-found' || authErr.code === 'auth/invalid-credential') {
-        console.error('[StaffLogin] The Firebase Auth account for this staff member was not found.');
-        console.error('[StaffLogin] Expected email:', email);
-        console.error('[StaffLogin] The Auth account may need to be recreated — ask the owner to reset the staff code.');
+        console.error('[StaffLogin] Firebase Auth account not found. Expected email:', email);
+        console.error('[StaffLogin] Ask the owner to click "Reset Code" for this staff member.');
         setError('Login account not found. Please ask your manager to reset your staff code.');
       } else if (authErr.code === 'auth/wrong-password') {
-        console.error('[StaffLogin] Password mismatch — the stored code and Auth password are out of sync.');
-        console.error('[StaffLogin] Ask the owner to reset the staff code to re-sync them.');
+        console.error('[StaffLogin] Password mismatch — stored code and Auth password are out of sync.');
+        console.error('[StaffLogin] Ask the owner to click "Reset Code" to re-sync them.');
         setError('Code mismatch. Please ask your manager to reset your staff code.');
       } else {
         setError('Login failed. Please try again or contact your manager.');

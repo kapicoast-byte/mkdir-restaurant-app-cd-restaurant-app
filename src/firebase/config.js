@@ -2,7 +2,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, browserLocalPersistence, setPersistence } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
-import { getFunctions } from 'firebase/functions';
 
 export const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -13,15 +12,18 @@ export const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
+// Primary app — the owner's session lives here
 const app = initializeApp(firebaseConfig);
-
 export const auth = getAuth(app);
-export const db = getFirestore(app);
-export const functions = getFunctions(app);
+export const db   = getFirestore(app);
 
-// Explicitly set LOCAL persistence so sessions survive app restarts and
-// page refreshes. This is the browser default, but we set it explicitly
-// so staff members stay logged in on their device.
+// Secondary app — used to create / update staff Firebase Auth accounts
+// without disturbing the owner's primary session.
+// Always call signOut(secondaryAuth) after each operation.
+const secondaryApp = initializeApp(firebaseConfig, 'Secondary');
+export const secondaryAuth = getAuth(secondaryApp);
+
+// Persist the primary session across page refreshes
 setPersistence(auth, browserLocalPersistence);
 
 export default app;
