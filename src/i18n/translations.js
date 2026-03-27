@@ -63,6 +63,11 @@ export const translations = {
     pendingReview:  'Awaiting Review',
     photoRejected:  'Photo Rejected',
     flagged:        'Flagged',
+    // Check-in page
+    noCheckInsToday: 'No check-ins scheduled for today',
+    scheduledFor:   'Scheduled for',
+    checkedInAt:    'Checked in at',
+    checkInSuccess: 'Checked in!',
   },
 
   // ── Hindi ─────────────────────────────────────────────────────────────────────
@@ -110,6 +115,10 @@ export const translations = {
     pendingReview:  'जाँच में है',
     photoRejected:  'फ़ोटो रद्द',
     flagged:        'समस्या है',
+    noCheckInsToday: 'आज कोई चेक-इन नहीं',
+    scheduledFor:   'समय',
+    checkedInAt:    'चेक इन किया',
+    checkInSuccess: 'चेक इन हो गया!',
   },
 
   // ── Tamil ─────────────────────────────────────────────────────────────────────
@@ -157,6 +166,10 @@ export const translations = {
     pendingReview:  'ஆய்வில் உள்ளது',
     photoRejected:  'படம் நிராகரிக்கப்பட்டது',
     flagged:        'சிக்கல் உள்ளது',
+    noCheckInsToday: 'இன்று சரிபார்ப்பு இல்லை',
+    scheduledFor:   'நேரம்',
+    checkedInAt:    'சரிபார்த்தது',
+    checkInSuccess: 'சரிபார்க்கப்பட்டது!',
   },
 
   // ── Telugu ────────────────────────────────────────────────────────────────────
@@ -204,6 +217,10 @@ export const translations = {
     pendingReview:  'సమీక్షలో ఉంది',
     photoRejected:  'ఫోటో తిరస్కరించబడింది',
     flagged:        'సమస్య ఉంది',
+    noCheckInsToday: 'ఈరోజు చెక్-ఇన్ లేదు',
+    scheduledFor:   'సమయం',
+    checkedInAt:    'చెక్ ఇన్ చేశారు',
+    checkInSuccess: 'చెక్ ఇన్ అయింది!',
   },
 
   // ── Malayalam ─────────────────────────────────────────────────────────────────
@@ -251,6 +268,10 @@ export const translations = {
     pendingReview:  'പരിശോധനയിൽ',
     photoRejected:  'ഫോട്ടോ നിരസിക്കപ്പെട്ടു',
     flagged:        'പ്രശ്നം ഉണ്ട്',
+    noCheckInsToday: 'ഇന്ന് ചെക്ക്-ഇൻ ഇല്ല',
+    scheduledFor:   'സമയം',
+    checkedInAt:    'ചെക്ക് ഇൻ ചെയ്തു',
+    checkInSuccess: 'ചെക്ക് ഇൻ ആയി!',
   },
 
   // ── Kannada ───────────────────────────────────────────────────────────────────
@@ -298,6 +319,10 @@ export const translations = {
     pendingReview:  'ಪರಿಶೀಲನೆಯಲ್ಲಿದೆ',
     photoRejected:  'ಫೋಟೋ ತಿರಸ್ಕರಿಸಲಾಗಿದೆ',
     flagged:        'ಸಮಸ್ಯೆ ಇದೆ',
+    noCheckInsToday: 'ಇಂದು ಚೆಕ್-ಇನ್ ಇಲ್ಲ',
+    scheduledFor:   'ಸಮಯ',
+    checkedInAt:    'ಚೆಕ್ ಇನ್ ಮಾಡಿದ್ದೇವೆ',
+    checkInSuccess: 'ಚೆಕ್ ಇನ್ ಆಯಿತು!',
   },
 
   // ── Marathi ───────────────────────────────────────────────────────────────────
@@ -345,6 +370,10 @@ export const translations = {
     pendingReview: 'तपासणीत',
     photoRejected: 'फोटो नाकारला',
     flagged:       'समस्या आहे',
+    noCheckInsToday: 'आज चेक-इन नाही',
+    scheduledFor:  'वेळ',
+    checkedInAt:   'चेक इन केले',
+    checkInSuccess: 'चेक इन झाले!',
   },
 
   // ── Bengali ───────────────────────────────────────────────────────────────────
@@ -392,6 +421,10 @@ export const translations = {
     pendingReview: 'পর্যালোচনায়',
     photoRejected: 'ছবি প্রত্যাখ্যাত',
     flagged:       'সমস্যা আছে',
+    noCheckInsToday: 'আজ চেক-ইন নেই',
+    scheduledFor:  'সময়',
+    checkedInAt:   'চেক ইন হয়েছে',
+    checkInSuccess: 'চেক ইন হল!',
   },
 
   // ── Gujarati ──────────────────────────────────────────────────────────────────
@@ -439,6 +472,10 @@ export const translations = {
     pendingReview: 'ચકાસણીમાં',
     photoRejected: 'ફોટો નામંજૂર',
     flagged:       'સમસ્યા છે',
+    noCheckInsToday: 'આજ ચેક-ઇન નથી',
+    scheduledFor:  'સમય',
+    checkedInAt:   'ચેક ઇન થયો',
+    checkInSuccess: 'ચેક ઇન!',
   },
 
   // ── Punjabi ───────────────────────────────────────────────────────────────────
@@ -486,6 +523,10 @@ export const translations = {
     pendingReview: 'ਜਾਂਚ ਵਿੱਚ',
     photoRejected: 'ਫੋਟੋ ਰੱਦ',
     flagged:       'ਸਮੱਸਿਆ ਹੈ',
+    noCheckInsToday: 'ਅੱਜ ਕੋਈ ਚੈੱਕ-ਇਨ ਨਹੀਂ',
+    scheduledFor:  'ਸਮਾਂ',
+    checkedInAt:   'ਚੈੱਕ ਇਨ ਹੋਇਆ',
+    checkInSuccess: 'ਚੈੱਕ ਇਨ ਹੋ ਗਿਆ!',
   },
 
   // ── Urdu (RTL) ────────────────────────────────────────────────────────────────
@@ -533,5 +574,9 @@ export const translations = {
     pendingReview: 'جانچ میں',
     photoRejected: 'تصویر مسترد',
     flagged:       'مسئلہ ہے',
+    noCheckInsToday: 'آج کوئی چیک-ان نہیں',
+    scheduledFor:  'وقت',
+    checkedInAt:   'چیک ان ہوا',
+    checkInSuccess: 'چیک ان ہو گیا!',
   },
 };
