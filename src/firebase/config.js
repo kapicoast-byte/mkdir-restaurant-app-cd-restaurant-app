@@ -19,6 +19,10 @@ export const auth    = getAuth(app);
 export const db      = getFirestore(app);
 export const storage = getStorage(app);
 
+// Startup diagnostic — visible in DevTools console on every page load.
+// Helps confirm the Storage bucket is wired up correctly.
+console.log('[Firebase] Initialized. Storage bucket:', firebaseConfig.storageBucket ?? '⚠️ MISSING — check VITE_FIREBASE_STORAGE_BUCKET');
+
 // Secondary app — used to create / update staff Firebase Auth accounts
 // without disturbing the owner's primary session.
 // Always call signOut(secondaryAuth) after each operation.

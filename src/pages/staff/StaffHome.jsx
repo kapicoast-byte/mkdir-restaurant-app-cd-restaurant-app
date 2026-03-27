@@ -467,18 +467,39 @@ export default function StaffHome() {
     if (!photoTask) return;
     setModalLoading(true);
     try {
-      const storageRef = ref(storage, `taskPhotos/${photoTask.id}/${Date.now()}.jpg`);
+      console.log('Step 1 - Photo selected:', file.name, file.size, file.type);
+
+      if (!photoTask.id) {
+        console.error('Step 1b - photoTask.id is undefined or null! photoTask:', photoTask);
+        toast.error('Task ID missing — cannot upload photo.');
+        return;
+      }
+
+      const storagePath = `taskPhotos/${photoTask.id}/${Date.now()}.jpg`;
+      console.log('Step 2 - Storage ref path:', storagePath);
+
+      const storageRef = ref(storage, storagePath);
+
+      console.log('Step 3 - Upload started');
       await uploadBytes(storageRef, file);
+
+      console.log('Step 4 - Upload complete, getting download URL');
       const photoUrl = await getDownloadURL(storageRef);
-      // On retake: also clear rejectionReason
+      console.log('Step 4 - Download URL:', photoUrl);
+
+      console.log('Step 5 - Firestore task update started, taskId:', photoTask.id);
       const update = isRetake
         ? { status: 'pending photo review', photoUrl, rejectionReason: null }
         : { status: 'pending photo review', photoUrl };
       await updateDoc(doc(db, 'tasks', photoTask.id), update);
+      console.log('Step 6 - Task updated successfully');
+
       toast.success(t('taskDone'));
       setPhotoTask(null);
       setIsRetake(false);
-    } catch {
+    } catch (error) {
+      console.log('ERROR:', error.code, error.message);
+      console.error('Full error object:', error);
       toast.error('Failed to upload photo.');
     } finally {
       setModalLoading(false);
