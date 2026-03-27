@@ -80,6 +80,9 @@ function StaffLoginForm() {
     } catch (queryErr) {
       console.log('ERROR caught:', queryErr.code, queryErr.message);
       if (queryErr.code === 'permission-denied') {
+        console.error('[StaffLogin] Auth uid: (not yet signed in — this query runs before auth)');
+        console.error('[StaffLogin] User profile from Firestore: null');
+        console.error('[StaffLogin] Error if any:', queryErr);
         console.error('[StaffLogin] FIX NEEDED: Firestore rules block unauthenticated reads on /staff.');
         console.error('[StaffLogin] In Firebase Console → Firestore Rules, add to the /staff match block:');
         console.error('[StaffLogin]   allow list: if true;');
