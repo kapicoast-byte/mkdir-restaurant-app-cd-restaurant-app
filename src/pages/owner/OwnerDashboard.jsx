@@ -1,4 +1,4 @@
-// Owner dashboard — branch health cards, total staff, task summaries
+// Owner dashboard — branch health cards, total staff, task summaries, photo audit
 import { useEffect, useState } from 'react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase/config';
@@ -25,12 +25,29 @@ function HealthBadge({ score }) {
   return <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${color}`}>{score}% complete</span>;
 }
 
+// ── Photo Audit lightbox ──────────────────────────────────────────────────────
+function PhotoLightbox({ url, onClose }) {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4" onClick={onClose}>
+      <button className="absolute top-4 right-4 text-white text-3xl leading-none" onClick={onClose}>×</button>
+      <img
+        src={url}
+        alt="Task photo"
+        className="max-w-full max-h-full rounded-lg object-contain"
+        onClick={(e) => e.stopPropagation()}
+      />
+    </div>
+  );
+}
+
 export default function OwnerDashboard() {
   const { user } = useAuth();
-  const [branches, setBranches] = useState([]);
-  const [allStaff, setAllStaff] = useState([]);
-  const [allTasks, setAllTasks] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [branches,      setBranches]      = useState([]);
+  const [allStaff,      setAllStaff]      = useState([]);
+  const [allTasks,      setAllTasks]      = useState([]);
+  const [loading,       setLoading]       = useState(true);
+  const [auditBranch,   setAuditBranch]   = useState('all'); // branch filter for photo audit
+  const [lightboxUrl,   setLightboxUrl]   = useState(null);
 
   useEffect(() => {
     if (!user) return;
@@ -63,6 +80,20 @@ export default function OwnerDashboard() {
 
   const totalActiveStaff = allStaff.length;
   const now = new Date();
+
+  // Photo audit: completed tasks that have a photoUrl, filtered by branch
+  const photoAuditTasks = allTasks
+    .filter((t) => t.status === 'completed' && t.photoUrl)
+    .filter((t) => auditBranch === 'all' || t.branchId === auditBranch)
+    .sort((a, b) => {
+      // Sort by completion time descending (use updatedAt if available, else createdAt)
+      const ta = a.updatedAt?.toDate ? a.updatedAt.toDate() : (a.updatedAt ? new Date(a.updatedAt) : new Date(0));
+      const tb = b.updatedAt?.toDate ? b.updatedAt.toDate() : (b.updatedAt ? new Date(b.updatedAt) : new Date(0));
+      return tb - ta;
+    });
+
+  const staffName   = (id) => allStaff.find((s) => s.id === id)?.name ?? '—';
+  const branchName  = (id) => branches.find((b) => b.id === id)?.name ?? '—';
 
   // Build per-branch stats
   const branchStats = branches.map((branch) => {
@@ -143,6 +174,62 @@ export default function OwnerDashboard() {
           ))}
         </div>
       )}
+
+      {/* ── Photo Audit ─────────────────────────────────────────────────── */}
+      <div className="mt-10">
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+          <h2 className="text-lg font-semibold text-gray-800">📷 Photo Audit</h2>
+          {/* Branch filter */}
+          <select
+            value={auditBranch}
+            onChange={(e) => setAuditBranch(e.target.value)}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            <option value="all">All Branches</option>
+            {branches.map((b) => (
+              <option key={b.id} value={b.id}>{b.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {photoAuditTasks.length === 0 ? (
+          <EmptyState icon="🖼️" title="No photo completions yet" message="Completed tasks with photos will appear here." />
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+            {photoAuditTasks.map((task) => {
+              const completedAt = task.updatedAt?.toDate
+                ? task.updatedAt.toDate()
+                : task.updatedAt
+                  ? new Date(task.updatedAt)
+                  : null;
+              return (
+                <div key={task.id} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                  {/* Photo thumbnail */}
+                  <button
+                    onClick={() => setLightboxUrl(task.photoUrl)}
+                    className="w-full h-40 overflow-hidden bg-gray-100 block hover:opacity-90 transition-opacity"
+                  >
+                    <img src={task.photoUrl} alt="Task proof" className="w-full h-full object-cover" />
+                  </button>
+                  <div className="p-4">
+                    <h3 className="font-semibold text-gray-900 truncate">{task.title}</h3>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5 text-xs text-gray-500">
+                      <span>👤 {staffName(task.assignedTo)}</span>
+                      <span>🏢 {branchName(task.branchId)}</span>
+                      {completedAt && (
+                        <span>🕐 {completedAt.toLocaleString('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Lightbox */}
+      {lightboxUrl && <PhotoLightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />}
     </div>
   );
 }

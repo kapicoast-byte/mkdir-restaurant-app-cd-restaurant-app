@@ -49,7 +49,7 @@ function formatTime(ts) {
 // Returns true when a task is overdue (dueTime in the past, status not completed/flagged)
 function isOverdue(task) {
   if (!task.dueTime) return false;
-  if (['completed', 'flagged', 'pending photo review'].includes(task.status)) return false;
+  if (['completed', 'flagged', 'pending photo review', 'photo rejected'].includes(task.status)) return false;
   const due = task.dueTime?.toDate ? task.dueTime.toDate() : new Date(task.dueTime);
   return due < new Date();
 }
@@ -99,18 +99,22 @@ function StatusBadge({ task, th, t }) {
       return <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">{t('flagged')}</span>;
     case 'pending photo review':
       return <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">{t('pendingReview')}</span>;
+    case 'photo rejected':
+      return <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${th.badgeOverdue}`}>{t('photoRejected')}</span>;
     default:
       return <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${th.badgePending}`}>{t('pending')}</span>;
   }
 }
 
 // ── Task Card ─────────────────────────────────────────────────────────────────
-function TaskCard({ task, th, t, onMarkDone, onFlag }) {
-  const { icon, bg, text } = typeConfig(task.type);
-  const hideButtons = task.status === 'completed' || task.status === 'pending photo review';
+function TaskCard({ task, th, t, onMarkDone, onFlag, onRetakePhoto }) {
+  const { icon, bg } = typeConfig(task.type);
+  const hideButtons       = task.status === 'completed' || task.status === 'pending photo review';
+  const isPhotoRejected   = task.status === 'photo rejected';
+  const cardBorder        = isPhotoRejected ? 'border-2 border-red-400' : `border ${th.border}`;
 
   return (
-    <div className={`rounded-xl p-4 border ${th.cardBg} ${th.border} shadow-sm`}>
+    <div className={`rounded-xl p-4 ${th.cardBg} ${cardBorder} shadow-sm`}>
       {/* Top row: icon + title + badge */}
       <div className="flex items-start gap-3">
         <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${bg}`}>
@@ -132,8 +136,26 @@ function TaskCard({ task, th, t, onMarkDone, onFlag }) {
         </div>
       </div>
 
-      {/* Action buttons */}
-      {!hideButtons && (
+      {/* Rejection reason banner */}
+      {isPhotoRejected && task.rejectionReason && (
+        <div className="mt-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg">
+          <p className="text-xs font-semibold text-red-700 mb-0.5">{t('rejectionReason')}</p>
+          <p className="text-xs text-red-600">{task.rejectionReason}</p>
+        </div>
+      )}
+
+      {/* Retake Photo button for rejected tasks */}
+      {isPhotoRejected && (
+        <button
+          onClick={() => onRetakePhoto(task)}
+          className="mt-3 w-full flex items-center justify-center gap-1.5 py-2.5 rounded-lg bg-indigo-600 text-white text-sm font-medium active:bg-indigo-700 transition-colors"
+        >
+          <span>📷</span> {t('retakePhoto')}
+        </button>
+      )}
+
+      {/* Standard action buttons */}
+      {!hideButtons && !isPhotoRejected && (
         <div className="flex gap-2 mt-3">
           <button
             onClick={() => onMarkDone(task)}
@@ -364,9 +386,10 @@ export default function StaffHome() {
   const [tasksLoading, setTasksLoading] = useState(true);
 
   // Modal state
-  const [confirmTask, setConfirmTask] = useState(null);  // task for no-photo confirm
-  const [photoTask,   setPhotoTask]   = useState(null);  // task for photo capture
-  const [flagTask,    setFlagTask]    = useState(null);  // task for flag modal
+  const [confirmTask,  setConfirmTask]  = useState(null);  // task for no-photo confirm
+  const [photoTask,    setPhotoTask]    = useState(null);  // task for photo capture (new or retake)
+  const [flagTask,     setFlagTask]     = useState(null);  // task for flag modal
+  const [isRetake,     setIsRetake]     = useState(false); // true when reopening for a rejected photo
   const [modalLoading, setModalLoading] = useState(false);
 
   const staffId = userProfile?.staffId;
@@ -413,10 +436,17 @@ export default function StaffHome() {
   // ── Mark Done handler ────────────────────────────────────────────────────
   function handleMarkDone(task) {
     if (task.requiresPhoto) {
+      setIsRetake(false);
       setPhotoTask(task);
     } else {
       setConfirmTask(task);
     }
+  }
+
+  // ── Retake Photo handler (photo rejected → reopen camera modal) ──────────
+  function handleRetakePhoto(task) {
+    setIsRetake(true);
+    setPhotoTask(task);
   }
 
   async function confirmDone() {
@@ -440,12 +470,14 @@ export default function StaffHome() {
       const storageRef = ref(storage, `taskPhotos/${photoTask.id}/${Date.now()}.jpg`);
       await uploadBytes(storageRef, file);
       const photoUrl = await getDownloadURL(storageRef);
-      await updateDoc(doc(db, 'tasks', photoTask.id), {
-        status:   'pending photo review',
-        photoUrl,
-      });
+      // On retake: also clear rejectionReason
+      const update = isRetake
+        ? { status: 'pending photo review', photoUrl, rejectionReason: null }
+        : { status: 'pending photo review', photoUrl };
+      await updateDoc(doc(db, 'tasks', photoTask.id), update);
       toast.success(t('taskDone'));
       setPhotoTask(null);
+      setIsRetake(false);
     } catch {
       toast.error('Failed to upload photo.');
     } finally {
@@ -527,6 +559,7 @@ export default function StaffHome() {
                 t={t}
                 onMarkDone={handleMarkDone}
                 onFlag={(task) => setFlagTask(task)}
+                onRetakePhoto={handleRetakePhoto}
               />
             ))}
           </div>
@@ -552,7 +585,7 @@ export default function StaffHome() {
           t={t}
           loading={modalLoading}
           onSubmit={submitPhoto}
-          onClose={() => !modalLoading && setPhotoTask(null)}
+          onClose={() => { if (!modalLoading) { setPhotoTask(null); setIsRetake(false); } }}
         />
       )}
 
