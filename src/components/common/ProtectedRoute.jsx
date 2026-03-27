@@ -7,7 +7,7 @@ import { useAuth } from '../../context/AuthContext';
 function dashboardForRole(role) {
   if (role === 'owner') return '/owner/dashboard';
   if (role === 'manager' || role === 'trustedManager') return '/manager/dashboard';
-  return '/staff/dashboard';
+  return '/staff/home';
 }
 
 export default function ProtectedRoute({ children, allowedRoles }) {

@@ -34,7 +34,7 @@ function StaffLoginForm() {
     const role = userProfile.role;
     if (role === 'owner') navigate('/owner/dashboard', { replace: true });
     else if (role === 'manager' || role === 'trustedManager') navigate('/manager/dashboard', { replace: true });
-    else navigate('/staff/dashboard', { replace: true });
+    else navigate('/staff/home', { replace: true });
   }
 
   const handleSubmit = async (e) => {
@@ -185,7 +185,7 @@ function OwnerLoginForm() {
     const role = userProfile.role;
     if (role === 'owner') navigate('/owner/dashboard', { replace: true });
     else if (role === 'manager' || role === 'trustedManager') navigate('/manager/dashboard', { replace: true });
-    else navigate('/staff/dashboard', { replace: true });
+    else navigate('/staff/home', { replace: true });
   }
 
   const handleChange = (e) => setForm((f) => ({ ...f, [e.target.name]: e.target.value }));

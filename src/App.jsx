@@ -24,7 +24,11 @@ import Shifts from './pages/manager/Shifts';
 import CheckIns from './pages/manager/CheckIns';
 
 // Staff pages
-import StaffDashboard from './pages/staff/StaffDashboard';
+import StaffLayout   from './pages/staff/StaffLayout';
+import StaffHome     from './pages/staff/StaffHome';
+import StaffCheckIn  from './pages/staff/StaffCheckIn';
+import StaffShifts   from './pages/staff/StaffShifts';
+import StaffSettings from './pages/staff/StaffSettings';
 
 const OWNER_ROLES   = ['owner'];
 const MANAGER_ROLES = ['manager', 'trustedManager'];
@@ -83,15 +87,23 @@ export default function App() {
             <Route path="checkins" element={<CheckIns />} />
           </Route>
 
-          {/* Staff routes — placeholder until Phase 2 */}
+          {/* Staff routes */}
           <Route
-            path="/staff/dashboard"
+            path="/staff"
             element={
               <ProtectedRoute allowedRoles={STAFF_ROLES}>
-                <StaffDashboard />
+                <StaffLayout />
               </ProtectedRoute>
             }
-          />
+          >
+            <Route index                element={<Navigate to="home" replace />} />
+            <Route path="home"          element={<StaffHome />} />
+            <Route path="checkin"       element={<StaffCheckIn />} />
+            <Route path="shifts"        element={<StaffShifts />} />
+            <Route path="settings"      element={<StaffSettings />} />
+            {/* Legacy redirect — old /staff/dashboard links still work */}
+            <Route path="dashboard"     element={<Navigate to="/staff/home" replace />} />
+          </Route>
 
           {/* Default redirect */}
           <Route path="*" element={<Navigate to="/login" replace />} />
