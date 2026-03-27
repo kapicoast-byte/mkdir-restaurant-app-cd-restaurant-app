@@ -1,6 +1,4 @@
-// Staff Settings — language selector, dark mode toggle, profile, sign-out
-// This page is fully functional from day 1 since it uses only local state
-// and a single Firestore write for language preference.
+// Staff Settings — profile card, language selector, theme toggle, log out.
 import { useState } from 'react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase/config';
@@ -10,26 +8,78 @@ import { LANGUAGES } from '../../i18n/translations';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 
+// ── Friendly role labels ──────────────────────────────────────────────────────
+const ROLE_LABELS = {
+  kitchen:  'Kitchen Staff',
+  floor:    'Floor Staff',
+  cleaning: 'Cleaning Staff',
+  manager:  'Manager',
+  staff:    'Staff',
+};
+
+function friendlyRole(role) {
+  return ROLE_LABELS[role?.toLowerCase()] ?? role ?? '—';
+}
+
+// ── Logout Confirm Modal ──────────────────────────────────────────────────────
+function LogoutModal({ th, t, onConfirm, onClose }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4" onClick={onClose}>
+      <div
+        className={`w-full max-w-sm rounded-2xl p-6 ${th.cardBg} shadow-2xl`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="text-center mb-5">
+          <div className="text-4xl mb-3">👋</div>
+          <h3 className={`font-bold text-lg ${th.text}`}>{t('confirmLogoutTitle')}</h3>
+          <p className={`text-sm mt-1 ${th.textSub}`}>{t('confirmLogoutMsg')}</p>
+        </div>
+        <div className="flex gap-3">
+          <button
+            onClick={onClose}
+            className={`flex-1 py-3 rounded-xl border text-sm font-medium ${th.border} ${th.text}`}
+          >
+            {t('cancel')}
+          </button>
+          <button
+            onClick={onConfirm}
+            className="flex-1 py-3 rounded-xl bg-red-600 text-white text-sm font-semibold"
+          >
+            {t('logout')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
 export default function StaffSettings() {
   const { t, lang, isDark, toggleTheme, th } = useStaffCtx();
-  const { userProfile, logout } = useAuth();
+  const { userProfile, logout }               = useAuth();
   const navigate = useNavigate();
-  const [saving, setSaving] = useState(false);
-  const [copied, setCopied] = useState(false);
 
-  // Pull staffId + staffCode from userProfile
-  const staffId   = userProfile?.staffId ?? null;
-  const staffCode = userProfile?.staffCode ?? null; // may not be present in /users
+  const [saving,      setSaving]      = useState(false);
+  const [copied,      setCopied]      = useState(false);
+  const [showLogout,  setShowLogout]  = useState(false);
 
+  const staffId   = userProfile?.staffId   ?? null;
+  const staffCode = userProfile?.staffCode ?? null;
+  const branchName = userProfile?.branchName ?? userProfile?.branch ?? null;
+
+  // ── Language change ────────────────────────────────────────────────────────
   const handleLanguageChange = async (code) => {
-    if (!staffId) return;
+    if (!staffId || saving) return;
     setSaving(true);
     try {
       await updateDoc(doc(db, 'staff', staffId), { preferredLanguage: code });
-      // Also mirror to /users/{uid} so other parts of the app see it
-      await updateDoc(doc(db, 'users', userProfile.uid ?? ''), {
-        preferredLanguage: code,
-      }).catch(() => {}); // non-fatal if uid not available
+      // Non-fatal mirror to /users doc
+      if (userProfile?.uid) {
+        await updateDoc(doc(db, 'users', userProfile.uid), {
+          preferredLanguage: code,
+        }).catch(() => {});
+      }
+      // Toast in the newly selected language (t() will update after onSnapshot)
     } catch {
       toast.error('Could not save language preference');
     } finally {
@@ -37,7 +87,18 @@ export default function StaffSettings() {
     }
   };
 
+  // ── Copy staff code ────────────────────────────────────────────────────────
+  const copyCode = () => {
+    if (!staffCode) return;
+    navigator.clipboard.writeText(staffCode).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  // ── Logout ─────────────────────────────────────────────────────────────────
   const handleLogout = async () => {
+    setShowLogout(false);
     try {
       await logout();
       navigate('/login');
@@ -46,50 +107,79 @@ export default function StaffSettings() {
     }
   };
 
-  const copyCode = (code) => {
-    navigator.clipboard.writeText(code).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  };
-
-  // ── Row component helpers ─────────────────────────────────────────────────
+  // ── Section helpers ────────────────────────────────────────────────────────
   const SectionTitle = ({ label }) => (
     <p className={`px-5 pt-6 pb-2 text-xs font-semibold uppercase tracking-wider ${th.textFaint}`}>
       {label}
     </p>
   );
 
-  const Row = ({ children }) => (
-    <div className={`${th.cardBg} border-b ${th.border} px-5 py-4 flex items-center justify-between`}>
-      {children}
-    </div>
-  );
-
   return (
     <div className={`min-h-full ${th.pageBg}`}>
-      {/* Header */}
-      <div className={`px-5 pt-10 pb-6 ${th.cardBg} border-b ${th.border}`}>
+
+      {/* ── Header ─────────────────────────────────────────────────────── */}
+      <div className={`px-5 pt-10 pb-5 ${th.cardBg} border-b ${th.border}`}>
         <h1 className={`text-2xl font-bold ${th.text}`}>{t('settings')}</h1>
       </div>
 
       {/* ── Profile section ─────────────────────────────────────────────── */}
-      <SectionTitle label={userProfile?.name ?? '—'} />
-      <Row>
-        <span className={`text-sm ${th.textSub}`}>Role</span>
-        <span className={`text-sm font-medium ${th.text} capitalize`}>
-          {userProfile?.role ?? '—'}
-        </span>
-      </Row>
+      <SectionTitle label={t('profile')} />
+      <div className={`${th.cardBg} border-y ${th.border}`}>
 
-      {/* ── Appearance ───────────────────────────────────────────────────── */}
-      <SectionTitle label={t('darkMode')} />
-      <Row>
-        <span className={`text-sm font-medium ${th.text}`}>{t('darkMode')}</span>
+        {/* Name */}
+        <div className={`px-5 py-4 border-b ${th.border}`}>
+          <p className={`text-xs ${th.textSub} mb-0.5`}>{t('profile')}</p>
+          <p className={`text-xl font-bold ${th.text}`}>{userProfile?.name ?? '—'}</p>
+        </div>
+
+        {/* Role */}
+        <div className={`px-5 py-4 flex items-center justify-between border-b ${th.border}`}>
+          <p className={`text-sm ${th.textSub}`}>Role</p>
+          <p className={`text-sm font-medium ${th.text}`}>{friendlyRole(userProfile?.role)}</p>
+        </div>
+
+        {/* Staff code + copy */}
+        {staffCode && (
+          <div className={`px-5 py-4 flex items-center justify-between border-b ${th.border}`}>
+            <div>
+              <p className={`text-xs ${th.textSub} mb-0.5`}>{t('staffCode')}</p>
+              <p className={`text-base font-mono font-bold tracking-widest ${th.text}`}>{staffCode}</p>
+            </div>
+            <button
+              onClick={copyCode}
+              className={`ml-3 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors border ${
+                copied
+                  ? 'bg-green-100 text-green-700 border-green-200'
+                  : `${th.altBg} ${th.border} ${th.textSub}`
+              }`}
+            >
+              {copied ? t('copied') : '📋 Copy'}
+            </button>
+          </div>
+        )}
+
+        {/* Branch */}
+        {branchName && (
+          <div className={`px-5 py-4 flex items-center justify-between`}>
+            <p className={`text-sm ${th.textSub}`}>{t('branch')}</p>
+            <p className={`text-sm font-medium ${th.text}`}>{branchName}</p>
+          </div>
+        )}
+      </div>
+
+      {/* ── Appearance ─────────────────────────────────────────────────── */}
+      <SectionTitle label={t('appearance')} />
+      <div className={`${th.cardBg} border-y ${th.border} px-5 py-4 flex items-center justify-between`}>
+        <div>
+          <p className={`text-sm font-medium ${th.text}`}>
+            {isDark ? t('darkMode') : t('lightMode')}
+          </p>
+          <p className={`text-xs mt-0.5 ${th.textSub}`}>{isDark ? '🌙' : '☀️'}</p>
+        </div>
         {/* Toggle switch */}
         <button
           onClick={toggleTheme}
-          aria-label="Toggle dark mode"
+          aria-label="Toggle theme"
           className={`relative inline-flex h-7 w-14 items-center rounded-full transition-colors focus:outline-none ${
             isDark ? 'bg-indigo-600' : 'bg-gray-300'
           }`}
@@ -100,45 +190,55 @@ export default function StaffSettings() {
             }`}
           />
         </button>
-      </Row>
-
-      {/* ── Language ─────────────────────────────────────────────────────── */}
-      <SectionTitle label={t('language')} />
-      <div className={`${th.cardBg} border-b ${th.border}`}>
-        {LANGUAGES.map((l) => (
-          <button
-            key={l.code}
-            disabled={saving}
-            onClick={() => handleLanguageChange(l.code)}
-            className={`w-full flex items-center justify-between px-5 py-4 border-b ${th.border} last:border-b-0
-              transition-colors active:opacity-70 disabled:opacity-40`}
-          >
-            <span
-              className={`text-base font-medium ${th.text}`}
-              dir={l.dir}
-            >
-              {l.nativeName}
-            </span>
-            {lang === l.code && (
-              <span className="text-indigo-500 text-xl">✓</span>
-            )}
-          </button>
-        ))}
       </div>
 
-      {/* ── Sign Out ─────────────────────────────────────────────────────── */}
+      {/* ── Language selector ─────────────────────────────────────────── */}
+      <SectionTitle label={t('language')} />
+      <div className={`${th.cardBg} border-y ${th.border}`}>
+        <div className="grid grid-cols-3 gap-px bg-gray-200 dark:bg-gray-700">
+          {LANGUAGES.map((l) => {
+            const isActive = lang === l.code;
+            return (
+              <button
+                key={l.code}
+                disabled={saving}
+                onClick={() => handleLanguageChange(l.code)}
+                dir={l.dir}
+                className={`px-3 py-4 text-center text-sm font-medium transition-colors disabled:opacity-40
+                  ${isActive
+                    ? 'bg-indigo-600 text-white'
+                    : `${th.cardBg} ${th.text} active:opacity-70`
+                  }`}
+              >
+                {l.nativeName}
+                {isActive && <span className="block text-xs mt-0.5 opacity-80">✓</span>}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── Log Out button ─────────────────────────────────────────────── */}
       <div className="px-5 py-6">
         <button
-          onClick={handleLogout}
-          className="w-full h-16 bg-red-500 hover:bg-red-600 active:bg-red-700
-            text-white text-base font-semibold rounded-2xl transition-colors"
+          onClick={() => setShowLogout(true)}
+          className="w-full h-14 bg-red-500 active:bg-red-600 text-white text-base font-semibold rounded-2xl transition-colors"
         >
           {t('logout')}
         </button>
       </div>
 
-      {/* Bottom padding for nav */}
       <div className="h-4" />
+
+      {/* ── Logout confirm modal ───────────────────────────────────────── */}
+      {showLogout && (
+        <LogoutModal
+          th={th}
+          t={t}
+          onConfirm={handleLogout}
+          onClose={() => setShowLogout(false)}
+        />
+      )}
     </div>
   );
 }
