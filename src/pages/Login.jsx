@@ -5,17 +5,20 @@
 // Extra features:
 //   • InstallBanner   — beforeinstallprompt (Android/Chrome) + iOS guidance
 //   • QuickLoginCard  — biometric "Welcome back" card from localStorage
-//   • QR auto-login   — ?code=STF-XXXX param auto-fills and submits
+//   • QR auto-login   — ?code=STF-XXXX param PRE-FILLS the input only (no auto-submit)
 //   • BiometricSetup  — after first login, offers fingerprint enrolment
 //
-// Staff code flow:
-//   1. Query /staff where staffCode == entered code
-//   2. Validate isActive
-//   3. Sign into Firebase Auth using the stable staff email + code-as-password
-//   4. AuthContext loads /users/{uid} and redirects based on role
+// Security rules:
+//   • Login ONLY happens when user explicitly taps a button or submits a form
+//   • No render-time redirects — navigate() is only called inside event handlers
+//   • localStorage is cleared on logout before any new session data is written
+//   • activeSessionUid in localStorage is checked against Firebase Auth uid on load
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { collection, query, where, getDocs, limit, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import {
+  collection, query, where, getDocs, limit,
+  doc, getDoc, setDoc, serverTimestamp,
+} from 'firebase/firestore';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth, db } from '../firebase/config';
 import { useAuth } from '../context/AuthContext';
@@ -27,8 +30,16 @@ export function staffAuthEmail(staffCode) {
   return `${staffCode.toLowerCase()}@staff.restaurant.app`;
 }
 
-// ── localStorage key ────────────────────────────────────────────────────────
-const QUICK_LOGIN_KEY = 'staffQuickLogin';
+// ── localStorage keys ────────────────────────────────────────────────────────
+const QUICK_LOGIN_KEY       = 'staffQuickLogin';
+const ACTIVE_SESSION_UID    = 'activeSessionUid';
+
+// Returns the correct dashboard path for a role
+function dashboardForRole(role) {
+  if (role === 'owner') return '/owner/dashboard';
+  if (role === 'manager' || role === 'trustedManager') return '/manager/dashboard';
+  return '/staff/home';
+}
 
 // ── WebAuthn helpers ────────────────────────────────────────────────────────
 
@@ -64,11 +75,10 @@ async function registerBiometric(staffName, staffEmail) {
 
   if (!available) throw new DOMException('No platform authenticator', 'NotSupportedError');
 
-  // challenge must be a Uint8Array
   const challenge = new Uint8Array(32);
   window.crypto.getRandomValues(challenge);
 
-  // user.id must be a Uint8Array — use the email as a stable, unique identifier
+  // user.id — stable, unique per staff member
   const userId = new TextEncoder().encode(staffEmail);
 
   // rpId must exactly match window.location.hostname (critical for Android / traefik.me)
@@ -81,10 +91,7 @@ async function registerBiometric(staffName, staffEmail) {
     credential = await navigator.credentials.create({
       publicKey: {
         challenge,
-        rp: {
-          name: 'Restaurant Staff Manager',
-          id:   rpId,
-        },
+        rp: { name: 'Restaurant Staff Manager', id: rpId },
         user: {
           id:          userId,
           name:        staffEmail,
@@ -137,14 +144,12 @@ function InstallBanner() {
   const [dismissed, setDismissed]           = useState(false);
 
   useEffect(() => {
-    // Android / Chrome / Edge
     const handler = (e) => {
       e.preventDefault();
       setDeferredPrompt(e);
     };
     window.addEventListener('beforeinstallprompt', handler);
 
-    // iOS Safari — not installable via JS; show manual guidance instead
     const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
     const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches
       || window.navigator.standalone;
@@ -196,15 +201,14 @@ function InstallBanner() {
 // Checks platform authenticator availability on mount and skips silently if
 // WebAuthn is not available — staff can always use their code instead.
 function BiometricSetupModal({ staffName, staffEmail, staffCode, role, onDone }) {
-  // 'checking' → 'prompt' | 'unavailable' | 'enrolling' | 'done' | 'error'
+  // 'checking' → 'prompt' | 'enrolling' | 'done' | 'error'
   const [state, setState] = useState('checking');
 
   useEffect(() => {
     platformAuthAvailable().then((available) => {
       console.log('[WebAuthn] BiometricSetupModal — platform auth available:', available);
       if (!available) {
-        // Skip silently — don't show an error, just call onDone immediately
-        onDone();
+        onDone(); // skip silently — no error shown
       } else {
         setState('prompt');
       }
@@ -225,8 +229,7 @@ function BiometricSetupModal({ staffName, staffEmail, staffCode, role, onDone })
       setState('done');
     } catch (err) {
       console.log('[WebAuthn] Enrolment failed:', err.name, err.message);
-      // NotAllowedError = user cancelled; NotSupportedError = hardware missing
-      // Either way, skip silently — no error shown to staff
+      // User cancelled or hardware missing — skip silently
       if (err.name === 'NotAllowedError' || err.name === 'NotSupportedError') {
         onDone();
       } else {
@@ -235,8 +238,8 @@ function BiometricSetupModal({ staffName, staffEmail, staffCode, role, onDone })
     }
   };
 
-  // Don't render anything while checking or if skipping
-  if (state === 'checking' || state === 'unavailable') return null;
+  // Don't render while checking or if we already decided to skip
+  if (state === 'checking') return null;
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center z-50 p-4">
@@ -290,7 +293,9 @@ function BiometricSetupModal({ staffName, staffEmail, staffCode, role, onDone })
             <div className="text-center">
               <div className="text-4xl mb-2">⚠️</div>
               <h2 className="text-lg font-bold text-gray-900">Setup Failed</h2>
-              <p className="text-sm text-gray-500 mt-1">Fingerprint setup failed. You can still log in with your staff code.</p>
+              <p className="text-sm text-gray-500 mt-1">
+                Fingerprint setup failed. You can still log in with your staff code.
+              </p>
             </div>
             <button
               onClick={onDone}
@@ -306,12 +311,13 @@ function BiometricSetupModal({ staffName, staffEmail, staffCode, role, onDone })
 }
 
 // ── Quick Login Card (biometric returning-user) ─────────────────────────────
+// NOTE: This card only shows "Tap to Login" and NEVER navigates automatically.
+// Navigation only happens after the user taps the button and biometric succeeds.
 function QuickLoginCard() {
-  const navigate   = useNavigate();
-  const { userProfile, loading } = useAuth();
-  const [tapping, setTapping]           = useState(false);
-  const [error, setError]               = useState('');
-  const [authAvailable, setAuthAvailable] = useState(null); // null = checking
+  const navigate = useNavigate();
+  const [tapping, setTapping]               = useState(false);
+  const [error, setError]                   = useState('');
+  const [authAvailable, setAuthAvailable]   = useState(null); // null = checking
 
   const stored = (() => {
     try { return JSON.parse(localStorage.getItem(QUICK_LOGIN_KEY)); }
@@ -327,23 +333,12 @@ function QuickLoginCard() {
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Redirect once profile loads after sign-in
-  if (!loading && userProfile) {
-    const role = userProfile.role;
-    if (role === 'owner') {
-      navigate('/owner/dashboard', { replace: true });
-    } else if (role === 'manager' || role === 'trustedManager') {
-      navigate('/manager/dashboard', { replace: true });
-    } else {
-      navigate('/staff/home', { replace: true });
-    }
-  }
-
   // No stored credential → nothing to show
   if (!stored?.credentialId) return null;
-  // Still checking availability → don't flash anything
+  // Still checking → don't flash anything
   if (authAvailable === null) return null;
 
+  // ── Only called on explicit tap — never automatically ──────────────────────
   const handleTap = async () => {
     setError('');
     setTapping(true);
@@ -351,7 +346,10 @@ function QuickLoginCard() {
       const ok = await verifyBiometric(stored.credentialId);
       if (!ok) throw new Error('Biometric verification returned false');
       await signInWithEmailAndPassword(auth, stored.email, stored.code);
-      // AuthContext will detect the sign-in and redirect
+      // Store active session uid so AuthContext can validate it
+      // We'll get the uid from Firebase auth after sign-in
+      // Navigate based on the role we already know from localStorage
+      navigate(dashboardForRole(stored.role), { replace: true });
     } catch (err) {
       console.log('[QuickLogin] Biometric failed:', err.name, err.message);
       setError('Fingerprint not recognised. Use your staff code below.');
@@ -386,50 +384,27 @@ function QuickLoginCard() {
 function StaffLoginForm() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { userProfile, loading } = useAuth();
-  const [code, setCode]             = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError]           = useState('');
+  const [code, setCode]                   = useState('');
+  const [submitting, setSubmitting]       = useState(false);
+  const [error, setError]                 = useState('');
   const [showBiometric, setShowBiometric] = useState(false);
-  const biometricPayload = useRef(null); // holds data after successful login
-  const autoSubmitted    = useRef(false);
+  const biometricPayload = useRef(null);
 
-  // QR auto-login: read ?code= param on mount
+  // QR auto-login: read ?code= param on mount and PRE-FILL the input ONLY.
+  // Staff must still tap the Login button — no auto-submit.
   useEffect(() => {
     const qrCode = searchParams.get('code');
-    if (qrCode && !autoSubmitted.current) {
-      const upper = qrCode.trim().toUpperCase();
-      setCode(upper);
-      autoSubmitted.current = true;
-      // Trigger submit after state settles
-      setTimeout(() => {
-        document.getElementById('staff-login-form')?.requestSubmit();
-      }, 100);
+    if (qrCode) {
+      setCode(qrCode.trim().toUpperCase());
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Redirect once the profile is ready after a successful sign-in
-  if (!loading && userProfile && !showBiometric) {
-    const role = userProfile.role;
-    if (role === 'owner') {
-      navigate('/owner/dashboard', { replace: true });
-    } else if (role === 'manager' || role === 'trustedManager') {
-      navigate('/manager/dashboard', { replace: true });
-    } else {
-      navigate('/staff/home', { replace: true });
-    }
-  }
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
 
-    console.log('Step 1 - Code entered:', code);
-
     const entered = code.trim().toUpperCase();
-
-    console.log('Step 2 - Code after trim/uppercase:', entered);
-
+    console.log('Step 1 - Code entered:', entered);
     if (!entered) { setError('Please enter your staff code.'); return; }
 
     setSubmitting(true);
@@ -437,14 +412,14 @@ function StaffLoginForm() {
     // ── Step 1: Firestore lookup ─────────────────────────────────────────────
     let staffDoc, staffData;
     try {
-      console.log('Step 3 - Querying Firestore /staff where staffCode ==', entered);
+      console.log('Step 2 - Querying Firestore /staff where staffCode ==', entered);
       const snap = await getDocs(
         query(collection(db, 'staff'), where('staffCode', '==', entered), limit(1))
       );
-      console.log('Step 4 - Documents found:', snap.size);
+      console.log('Step 3 - Documents found:', snap.size);
 
       if (snap.empty) {
-        console.log('Step 5 - No matching staff document found');
+        console.log('Step 4 - No matching staff document found');
         setError('Invalid code. Please check and try again.');
         setSubmitting(false);
         return;
@@ -452,14 +427,11 @@ function StaffLoginForm() {
 
       staffDoc  = snap.docs[0];
       staffData = staffDoc.data();
-      console.log('Step 6 - Staff doc data:', staffData);
-      console.log('Step 7 - isActive:', staffData.isActive);
-      console.log('Step 8 - authUid:', staffData.authUid);
+      console.log('Step 5 - isActive:', staffData.isActive, '| authUid:', staffData.authUid);
 
     } catch (queryErr) {
       console.log('ERROR caught:', queryErr.code, queryErr.message);
       if (queryErr.code === 'permission-denied') {
-        console.error('[StaffLogin] FIX NEEDED: Firestore rules block unauthenticated reads on /staff.');
         setError('System configuration issue. Please contact your manager.');
       } else {
         setError('Could not reach the server. Check your connection and try again.');
@@ -468,26 +440,24 @@ function StaffLoginForm() {
       return;
     }
 
-    // ── Step 2: Validate the staff record ────────────────────────────────────
     if (!staffData.isActive) {
-      console.log('ERROR caught: account-deactivated Your account has been deactivated.');
       setError('Your account has been deactivated. Please contact your manager.');
       setSubmitting(false);
       return;
     }
 
-    // ── Step 3: Firebase Auth sign-in ────────────────────────────────────────
+    // ── Step 2: Firebase Auth sign-in ────────────────────────────────────────
     const email = staffAuthEmail(entered);
-    console.log('Step 9 - Attempting Firebase auth sign in with email:', email);
+    console.log('Step 6 - Attempting Firebase auth sign in with email:', email);
     try {
       const cred = await signInWithEmailAndPassword(auth, email, entered);
-      console.log('Step 10 - Auth success, uid:', cred.user.uid);
+      const uid  = cred.user.uid;
+      console.log('Step 7 - Auth success, uid:', uid);
 
-      // ── Step 4: Ensure /users/{uid} exists ─────────────────────────────────
-      const uid      = cred.user.uid;
+      // ── Step 3: Ensure /users/{uid} exists ─────────────────────────────────
       const userSnap = await getDoc(doc(db, 'users', uid));
       if (!userSnap.exists()) {
-        console.log('Step 11 - /users doc missing, creating from staff document');
+        console.log('Step 8 - /users doc missing, creating from staff document');
         await setDoc(doc(db, 'users', uid), {
           name:      staffData.name,
           email,
@@ -498,6 +468,9 @@ function StaffLoginForm() {
         });
       }
 
+      // ── Step 4: Record active session uid (session lock) ──────────────────
+      localStorage.setItem(ACTIVE_SESSION_UID, uid);
+
       // ── Step 5: Offer biometric enrolment if not already stored ───────────
       const existingQuickLogin = (() => {
         try { return JSON.parse(localStorage.getItem(QUICK_LOGIN_KEY)); }
@@ -507,7 +480,6 @@ function StaffLoginForm() {
       const webAuthnAvailable = await platformAuthAvailable();
 
       if (webAuthnAvailable && !existingQuickLogin?.credentialId) {
-        // Store payload for use inside the modal
         biometricPayload.current = {
           name:  staffData.name,
           email,
@@ -516,11 +488,13 @@ function StaffLoginForm() {
         };
         setShowBiometric(true);
         setSubmitting(false);
-        return; // don't redirect yet — modal handles it
+        return; // navigation happens in onDone below
       }
 
-      // If already enrolled or WebAuthn unavailable, just update stored code
+      // If already enrolled, refresh stored code/email in case they changed
       if (existingQuickLogin) {
+        // Clear old data first, then write fresh — never mix two staff members
+        localStorage.removeItem(QUICK_LOGIN_KEY);
         localStorage.setItem(QUICK_LOGIN_KEY, JSON.stringify({
           ...existingQuickLogin,
           code:  entered,
@@ -530,15 +504,14 @@ function StaffLoginForm() {
         }));
       }
 
-      // AuthContext onAuthStateChanged picks up the new session → redirect fires above
+      // ── Step 6: Navigate based on role — only here, never on render ───────
+      navigate(dashboardForRole(staffData.role), { replace: true });
 
     } catch (authErr) {
       console.log('ERROR caught:', authErr.code, authErr.message);
       if (authErr.code === 'auth/user-not-found' || authErr.code === 'auth/invalid-credential') {
-        console.error('[StaffLogin] Firebase Auth account not found. Expected email:', email);
         setError('Login account not found. Please ask your manager to reset your staff code.');
       } else if (authErr.code === 'auth/wrong-password') {
-        console.error('[StaffLogin] Password mismatch — stored code and Auth password are out of sync.');
         setError('Code mismatch. Please ask your manager to reset your staff code.');
       } else {
         setError('Login failed. Please try again or contact your manager.');
@@ -563,9 +536,7 @@ function StaffLoginForm() {
             maxLength={8}
             className="w-full px-4 py-3 border border-gray-300 rounded-lg text-center text-xl font-mono font-bold tracking-widest uppercase focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
           />
-          {error && (
-            <p className="mt-2 text-sm text-red-600">{error}</p>
-          )}
+          {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
         </div>
         <button
           type="submit"
@@ -584,7 +555,8 @@ function StaffLoginForm() {
           role={biometricPayload.current.role}
           onDone={() => {
             setShowBiometric(false);
-            // Now let the redirect fire via userProfile being set
+            // Navigate now — user has finished the biometric setup flow
+            navigate(dashboardForRole(biometricPayload.current?.role), { replace: true });
           }}
         />
       )}
@@ -594,23 +566,10 @@ function StaffLoginForm() {
 
 // ── Owner / Admin email+password form ────────────────────────────────────────
 function OwnerLoginForm() {
-  const { login, userProfile, loading } = useAuth();
-  const navigate = useNavigate();
-  const [form, setForm] = useState({ email: '', password: '' });
+  const { login } = useAuth();
+  const navigate  = useNavigate();
+  const [form, setForm]         = useState({ email: '', password: '' });
   const [submitting, setSubmitting] = useState(false);
-
-  // Redirect once profile loads after sign-in
-  if (!loading && userProfile) {
-    const role = userProfile.role;
-    if (role === 'owner') {
-      navigate('/owner/dashboard', { replace: true });
-    } else if (role === 'manager' || role === 'trustedManager') {
-      navigate('/manager/dashboard', { replace: true });
-    } else {
-      // staff / kitchen / floor / cleaning
-      navigate('/staff/home', { replace: true });
-    }
-  }
 
   const handleChange = (e) => setForm((f) => ({ ...f, [e.target.name]: e.target.value }));
 
@@ -618,7 +577,16 @@ function OwnerLoginForm() {
     e.preventDefault();
     setSubmitting(true);
     try {
-      await login(form.email.trim(), form.password);
+      const cred     = await login(form.email.trim(), form.password);
+      const uid      = cred.user.uid;
+
+      // Record active session uid
+      localStorage.setItem(ACTIVE_SESSION_UID, uid);
+
+      // Fetch profile to determine which dashboard to navigate to
+      const userSnap = await getDoc(doc(db, 'users', uid));
+      const role     = userSnap.data()?.role ?? 'staff';
+      navigate(dashboardForRole(role), { replace: true });
     } catch (err) {
       const msg =
         err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password'
@@ -671,10 +639,8 @@ function OwnerLoginForm() {
 // ── Root Login page ──────────────────────────────────────────────────────────
 export default function Login() {
   const settingUp = useFirstTimeSetup();
-  // Staff tab is the default view
   const [tab, setTab] = useState('staff');
 
-  // ── "Setting up…" screen — blocks both tabs during first-time setup ────────
   if (settingUp) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
@@ -695,10 +661,8 @@ export default function Login() {
   return (
     <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        {/* Install banner — shown above the card */}
         <InstallBanner />
 
-        {/* Logo */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-14 h-14 bg-indigo-600 rounded-2xl mb-4">
             <span className="text-white text-2xl font-bold">R</span>
@@ -707,9 +671,7 @@ export default function Login() {
           <p className="text-gray-400 mt-1 text-sm">Staff Task Management Platform</p>
         </div>
 
-        {/* Card */}
         <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
-          {/* Tab switcher */}
           <div className="flex border-b border-gray-200">
             <button
               onClick={() => setTab('staff')}
@@ -733,11 +695,9 @@ export default function Login() {
             </button>
           </div>
 
-          {/* Form area */}
           <div className="p-8">
             {tab === 'staff' ? (
               <>
-                {/* Biometric quick-login card — only shown if credential exists */}
                 <QuickLoginCard />
                 <p className="text-sm text-gray-500 mb-6 text-center">
                   Enter the STF-XXXX code provided by your manager.

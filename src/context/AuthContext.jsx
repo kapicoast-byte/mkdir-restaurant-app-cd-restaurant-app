@@ -16,6 +16,19 @@ import { auth, db } from '../firebase/config';
 
 const AuthContext = createContext(null);
 
+const ACTIVE_SESSION_UID = 'activeSessionUid';
+
+// Clears all staff-related localStorage keys to prevent stale session data
+// from leaking between different staff members on the same device.
+function clearAllStaffLocalStorage() {
+  localStorage.removeItem('staffQuickLogin');
+  localStorage.removeItem('staffEmail');
+  localStorage.removeItem('staffCode');
+  localStorage.removeItem('staffCredentialId');
+  localStorage.removeItem('preferredLanguage');
+  localStorage.removeItem(ACTIVE_SESSION_UID);
+}
+
 export function AuthProvider({ children }) {
   const [user,        setUser]        = useState(null);
   const [userProfile, setUserProfile] = useState(null);
@@ -32,14 +45,31 @@ export function AuthProvider({ children }) {
         unsubscribeProfile = null;
       }
 
-      setUser(firebaseUser);
       setProfileError(null);
 
       if (!firebaseUser) {
+        setUser(null);
         setUserProfile(null);
         setLoading(false);
         return;
       }
+
+      // ── Session lock: ensure the persisted Firebase session belongs to the
+      // person who last explicitly logged in on this device. If the uids differ,
+      // someone else's session leaked in — sign out immediately.
+      const storedUid = localStorage.getItem(ACTIVE_SESSION_UID);
+      if (storedUid && storedUid !== firebaseUser.uid) {
+        console.warn(
+          '[AuthContext] Session uid mismatch — stored:', storedUid,
+          'firebase:', firebaseUser.uid,
+          '— signing out to prevent cross-user data leak'
+        );
+        clearAllStaffLocalStorage();
+        await signOut(auth);
+        return; // onAuthStateChanged will fire again with null
+      }
+
+      setUser(firebaseUser);
 
       // ── Primary: real-time listener on /users/{uid} ──────────────────────
       const userDocRef = doc(db, 'users', firebaseUser.uid);
@@ -136,8 +166,17 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
-  const login  = (email, password) => signInWithEmailAndPassword(auth, email, password);
-  const logout = () => signOut(auth);
+  const login = (email, password) => signInWithEmailAndPassword(auth, email, password);
+
+  const logout = async () => {
+    // Clear all staff-related localStorage BEFORE signing out so that
+    // the onAuthStateChanged(null) callback sees a clean slate.
+    clearAllStaffLocalStorage();
+    await signOut(auth);
+    // Hard redirect — ensures no stale React state or component re-renders
+    // carry data from the previous session.
+    window.location.replace('/login');
+  };
 
   const value = {
     user,
