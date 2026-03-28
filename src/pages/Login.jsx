@@ -32,9 +32,14 @@ function StaffLoginForm() {
   // Redirect once the profile is ready after a successful sign-in
   if (!loading && userProfile) {
     const role = userProfile.role;
-    if (role === 'owner') navigate('/owner/dashboard', { replace: true });
-    else if (role === 'manager' || role === 'trustedManager') navigate('/manager/dashboard', { replace: true });
-    else navigate('/staff/home', { replace: true });
+    if (role === 'owner') {
+      navigate('/owner/dashboard', { replace: true });
+    } else if (role === 'manager' || role === 'trustedManager') {
+      navigate('/manager/dashboard', { replace: true });
+    } else {
+      // staff / kitchen / floor / cleaning / any other role → staff portal
+      navigate('/staff/home', { replace: true });
+    }
   }
 
   const handleSubmit = async (e) => {
@@ -186,9 +191,14 @@ function OwnerLoginForm() {
   // Redirect once profile loads after sign-in
   if (!loading && userProfile) {
     const role = userProfile.role;
-    if (role === 'owner') navigate('/owner/dashboard', { replace: true });
-    else if (role === 'manager' || role === 'trustedManager') navigate('/manager/dashboard', { replace: true });
-    else navigate('/staff/home', { replace: true });
+    if (role === 'owner') {
+      navigate('/owner/dashboard', { replace: true });
+    } else if (role === 'manager' || role === 'trustedManager') {
+      navigate('/manager/dashboard', { replace: true });
+    } else {
+      // staff / kitchen / floor / cleaning
+      navigate('/staff/home', { replace: true });
+    }
   }
 
   const handleChange = (e) => setForm((f) => ({ ...f, [e.target.name]: e.target.value }));

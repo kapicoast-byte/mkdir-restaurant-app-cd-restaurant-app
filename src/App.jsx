@@ -31,8 +31,10 @@ import StaffShifts   from './pages/staff/StaffShifts';
 import StaffSettings from './pages/staff/StaffSettings';
 
 const OWNER_ROLES   = ['owner'];
-const MANAGER_ROLES = ['manager', 'trustedManager'];
-const STAFF_ROLES   = ['staff'];
+// owners can browse manager views; trustedManager = elevated staff manager
+const MANAGER_ROLES = ['owner', 'manager', 'trustedManager'];
+// all non-manager staff role variants must be listed here
+const STAFF_ROLES   = ['staff', 'kitchen', 'floor', 'cleaning'];
 
 export default function App() {
   return (

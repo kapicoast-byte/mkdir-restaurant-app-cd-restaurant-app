@@ -474,8 +474,13 @@ export default function StaffHome() {
     if (!photoTask) return;
     setModalLoading(true);
 
-    console.log('Step 1 - Photo selected:', file.name, file.size, file.type);
-    console.log('Step 1b - Task id:', photoTask.id, '| assignedTo:', photoTask.assignedTo, '| authUid:', authUid);
+    // ── Diagnostic block — paste these lines in the DevTools issue report ──
+    console.log('Photo selected:', file?.name, file?.size);
+    console.log('Task id:', photoTask.id);
+    console.log('Current user uid:', authUid);
+    console.log('Task assignedTo:', photoTask.assignedTo);
+    console.log('Match (assignedTo === user.uid):', photoTask.assignedTo === authUid);
+    // ──────────────────────────────────────────────────────────────────────
 
     if (!photoTask.id) {
       console.error('photoTask.id is undefined — cannot upload.');
@@ -488,14 +493,13 @@ export default function StaffHome() {
     let photoUrl;
     try {
       const storagePath = `taskPhotos/${photoTask.id}/${Date.now()}.jpg`;
-      console.log('Step 2 - Storage ref path:', storagePath);
-      console.log('Step 3 - Upload started');
+      console.log('Uploading to storage path:', storagePath);
       const storageRef = ref(storage, storagePath);
       await uploadBytes(storageRef, file);
       photoUrl = await getDownloadURL(storageRef);
-      console.log('Storage upload success, URL:', photoUrl);
+      console.log('Storage upload done, URL:', photoUrl);
     } catch (storageError) {
-      console.log('ERROR at Storage upload:', storageError.code, storageError.message);
+      console.log('ERROR at step A (storage):', storageError.code, storageError.message);
       console.error('Storage error object:', storageError);
       toast.error('Photo upload failed — please try again.');
       setModalLoading(false);
@@ -504,18 +508,18 @@ export default function StaffHome() {
 
     // ── Step B: Firestore update ──────────────────────────────────────────
     try {
-      console.log('Now updating Firestore task...');
+      console.log('Updating Firestore...');
       const update = isRetake
         ? { status: 'pending photo review', photoUrl, rejectionReason: null }
         : { status: 'pending photo review', photoUrl };
       await updateDoc(doc(db, 'tasks', photoTask.id), update);
-      console.log('Firestore update success');
+      console.log('Firestore update done');
 
       toast.success(t('taskDone'));
       setPhotoTask(null);
       setIsRetake(false);
     } catch (firestoreError) {
-      console.log('ERROR at Firestore update:', firestoreError.code, firestoreError.message);
+      console.log('ERROR at step B (firestore):', firestoreError.code, firestoreError.message);
       console.error('Firestore error object:', firestoreError);
       // Photo is already in Storage — tell user status update failed separately
       toast.error('Photo saved but status update failed — please try again.');
