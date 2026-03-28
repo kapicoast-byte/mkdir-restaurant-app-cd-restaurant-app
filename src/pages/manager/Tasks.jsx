@@ -206,13 +206,20 @@ export default function Tasks() {
     e.preventDefault();
     setSaving(true);
     try {
+      // form.assignedTo holds the Firestore staff doc id (used by the <select>).
+      // Firestore security rules check  assignedTo == request.auth.uid  which is
+      // the Firebase Auth uid — a different value.  Look it up from the staff list.
+      const selectedStaff = staff.find((s) => s.id === form.assignedTo);
+      const assignedToUid = selectedStaff?.authUid ?? form.assignedTo; // authUid = Firebase Auth uid
+
       const payload = {
-        title:         form.title.trim(),
-        description:   form.description.trim(),
-        assignedTo:    form.assignedTo,
-        dueTime:       form.dueTime ? new Date(form.dueTime).toISOString() : null,
-        type:          form.type,
-        requiresPhoto: form.requiresPhoto,
+        title:             form.title.trim(),
+        description:       form.description.trim(),
+        assignedTo:        assignedToUid,     // Firebase Auth UID — matches rules & staff portal query
+        assignedToStaffId: form.assignedTo,   // Firestore doc ID  — for name display lookups
+        dueTime:           form.dueTime ? new Date(form.dueTime).toISOString() : null,
+        type:              form.type,
+        requiresPhoto:     form.requiresPhoto,
         branchId,
       };
       if (editTarget) {
@@ -281,7 +288,13 @@ export default function Tasks() {
     }
   };
 
-  const staffName = (id) => staff.find((s) => s.id === id)?.name ?? '—';
+  // Resolves name from either a Firestore doc ID or a Firebase Auth UID.
+  // New tasks store assignedToStaffId (doc id); legacy tasks may have only assignedTo.
+  const staffName = (task) => {
+    const docId  = task?.assignedToStaffId ?? task?.assignedTo;
+    const authId = task?.assignedTo;
+    return staff.find((s) => s.id === docId || s.authUid === authId)?.name ?? '—';
+  };
 
   const pendingReviewTasks = tasks.filter((t) => t.status === 'pending photo review');
 
@@ -354,7 +367,7 @@ export default function Tasks() {
               <PhotoReviewCard
                 key={task.id}
                 task={task}
-                staffName={staffName(task.assignedTo)}
+                staffName={staffName(task)}
                 onApprove={handleApprove}
                 onReject={(t) => setRejectTarget(t)}
               />
@@ -405,7 +418,7 @@ export default function Tasks() {
                     </div>
                   )}
                   <div className="flex flex-wrap gap-3 text-xs text-gray-500">
-                    <span>👤 {staffName(task.assignedTo)}</span>
+                    <span>👤 {staffName(task)}</span>
                     {task.dueTime && (
                       <span className={new Date(task.dueTime) < new Date() && task.status !== 'completed' ? 'text-red-500 font-medium' : ''}>
                         ⏰ {new Date(task.dueTime).toLocaleString()}

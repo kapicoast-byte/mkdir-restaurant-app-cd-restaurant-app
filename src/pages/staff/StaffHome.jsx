@@ -379,29 +379,33 @@ function FlagModal({ task, th, t, lang, onClose, onSubmit, loading }) {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function StaffHome() {
   const { t, lang, th } = useStaffCtx();
-  const { userProfile }  = useAuth();
+  const { userProfile, user } = useAuth();  // user.uid = Firebase Auth UID
 
   const [tasks,  setTasks]  = useState([]);
   const [shift,  setShift]  = useState(null);
   const [tasksLoading, setTasksLoading] = useState(true);
 
   // Modal state
-  const [confirmTask,  setConfirmTask]  = useState(null);  // task for no-photo confirm
-  const [photoTask,    setPhotoTask]    = useState(null);  // task for photo capture (new or retake)
-  const [flagTask,     setFlagTask]     = useState(null);  // task for flag modal
-  const [isRetake,     setIsRetake]     = useState(false); // true when reopening for a rejected photo
+  const [confirmTask,  setConfirmTask]  = useState(null);
+  const [photoTask,    setPhotoTask]    = useState(null);
+  const [flagTask,     setFlagTask]     = useState(null);
+  const [isRetake,     setIsRetake]     = useState(false);
   const [modalLoading, setModalLoading] = useState(false);
 
+  // staffId = Firestore doc id (for shifts query, which was created that way)
+  // authUid = Firebase Auth uid  (for tasks query — matches Firestore rules)
   const staffId = userProfile?.staffId;
+  const authUid = user?.uid;
 
   // ── Firestore: today's tasks ─────────────────────────────────────────────
   useEffect(() => {
-    if (!staffId) return;
+    if (!authUid) return;
     const { start, end } = todayRange();
 
+    // assignedTo is now stored as Firebase Auth UID so it matches request.auth.uid in rules
     const q = query(
       collection(db, 'tasks'),
-      where('assignedTo', '==', staffId),
+      where('assignedTo', '==', authUid),
       where('createdAt', '>=', start),
       where('createdAt', '<',  end),
     );
@@ -410,10 +414,13 @@ export default function StaffHome() {
       const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       setTasks(sortTasks(list));
       setTasksLoading(false);
-    }, () => setTasksLoading(false));
+    }, (err) => {
+      console.error('Tasks onSnapshot error:', err.code, err.message);
+      setTasksLoading(false);
+    });
 
     return unsub;
-  }, [staffId]);
+  }, [authUid]);
 
   // ── Firestore: today's shift ─────────────────────────────────────────────
   useEffect(() => {
@@ -466,41 +473,52 @@ export default function StaffHome() {
   async function submitPhoto(file) {
     if (!photoTask) return;
     setModalLoading(true);
+
+    console.log('Step 1 - Photo selected:', file.name, file.size, file.type);
+    console.log('Step 1b - Task id:', photoTask.id, '| assignedTo:', photoTask.assignedTo, '| authUid:', authUid);
+
+    if (!photoTask.id) {
+      console.error('photoTask.id is undefined — cannot upload.');
+      toast.error('Task ID missing — cannot upload photo.');
+      setModalLoading(false);
+      return;
+    }
+
+    // ── Step A: Storage upload ────────────────────────────────────────────
+    let photoUrl;
     try {
-      console.log('Step 1 - Photo selected:', file.name, file.size, file.type);
-
-      if (!photoTask.id) {
-        console.error('Step 1b - photoTask.id is undefined or null! photoTask:', photoTask);
-        toast.error('Task ID missing — cannot upload photo.');
-        return;
-      }
-
       const storagePath = `taskPhotos/${photoTask.id}/${Date.now()}.jpg`;
       console.log('Step 2 - Storage ref path:', storagePath);
-
-      const storageRef = ref(storage, storagePath);
-
       console.log('Step 3 - Upload started');
+      const storageRef = ref(storage, storagePath);
       await uploadBytes(storageRef, file);
+      photoUrl = await getDownloadURL(storageRef);
+      console.log('Storage upload success, URL:', photoUrl);
+    } catch (storageError) {
+      console.log('ERROR at Storage upload:', storageError.code, storageError.message);
+      console.error('Storage error object:', storageError);
+      toast.error('Photo upload failed — please try again.');
+      setModalLoading(false);
+      return;
+    }
 
-      console.log('Step 4 - Upload complete, getting download URL');
-      const photoUrl = await getDownloadURL(storageRef);
-      console.log('Step 4 - Download URL:', photoUrl);
-
-      console.log('Step 5 - Firestore task update started, taskId:', photoTask.id);
+    // ── Step B: Firestore update ──────────────────────────────────────────
+    try {
+      console.log('Now updating Firestore task...');
       const update = isRetake
         ? { status: 'pending photo review', photoUrl, rejectionReason: null }
         : { status: 'pending photo review', photoUrl };
       await updateDoc(doc(db, 'tasks', photoTask.id), update);
-      console.log('Step 6 - Task updated successfully');
+      console.log('Firestore update success');
 
       toast.success(t('taskDone'));
       setPhotoTask(null);
       setIsRetake(false);
-    } catch (error) {
-      console.log('ERROR:', error.code, error.message);
-      console.error('Full error object:', error);
-      toast.error('Failed to upload photo.');
+    } catch (firestoreError) {
+      console.log('ERROR at Firestore update:', firestoreError.code, firestoreError.message);
+      console.error('Firestore error object:', firestoreError);
+      // Photo is already in Storage — tell user status update failed separately
+      toast.error('Photo saved but status update failed — please try again.');
     } finally {
       setModalLoading(false);
     }
@@ -517,7 +535,8 @@ export default function StaffHome() {
       });
       toast.success(t('problemReported'));
       setFlagTask(null);
-    } catch {
+    } catch (error) {
+      console.log('Flag error:', error.code, error.message);
       toast.error('Failed to report problem.');
     } finally {
       setModalLoading(false);
