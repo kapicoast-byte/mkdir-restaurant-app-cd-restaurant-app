@@ -1,18 +1,12 @@
-// Login page with two tabs:
-//   "Staff Login"  (default) — single STF-XXXX code field
-//   "Owner / Admin" — email + password
+// Login page — modern split layout
 //
-// Extra features:
-//   • InstallBanner   — beforeinstallprompt (Android/Chrome) + iOS guidance
-//   • QuickLoginCard  — biometric "Welcome back" card from localStorage
-//   • QR auto-login   — ?code=STF-XXXX param PRE-FILLS the input only (no auto-submit)
-//   • BiometricSetup  — after first login, offers fingerprint enrolment
+// Desktop: left brand panel (orange gradient) + right form panel (white/dark)
+// Mobile:  compact orange header at top, form below (single column)
 //
 // Security rules:
-//   • Login ONLY happens when user explicitly taps a button or submits a form
-//   • No render-time redirects — navigate() is only called inside event handlers
-//   • localStorage is cleared on logout before any new session data is written
-//   • activeSessionUid in localStorage is checked against Firebase Auth uid on load
+//   • Login ONLY happens on explicit user interaction (button tap / form submit)
+//   • No render-time redirects — navigate() is only inside event handlers
+//   • localStorage is cleared on logout; activeSessionUid locks cross-user sessions
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -25,23 +19,20 @@ import { useAuth } from '../context/AuthContext';
 import { useFirstTimeSetup } from '../hooks/useFirstTimeSetup';
 import toast from 'react-hot-toast';
 
-// Derives the stable Firebase Auth email for a staff member from their STF-XXXX code
 export function staffAuthEmail(staffCode) {
   return `${staffCode.toLowerCase()}@staff.restaurant.app`;
 }
 
-// ── localStorage keys ────────────────────────────────────────────────────────
-const QUICK_LOGIN_KEY       = 'staffQuickLogin';
-const ACTIVE_SESSION_UID    = 'activeSessionUid';
+const QUICK_LOGIN_KEY    = 'staffQuickLogin';
+const ACTIVE_SESSION_UID = 'activeSessionUid';
 
-// Returns the correct dashboard path for a role
 function dashboardForRole(role) {
   if (role === 'owner') return '/owner/dashboard';
   if (role === 'manager' || role === 'trustedManager') return '/manager/dashboard';
   return '/staff/home';
 }
 
-// ── WebAuthn helpers ────────────────────────────────────────────────────────
+// ── WebAuthn ─────────────────────────────────────────────────────────────────
 
 function base64urlEncode(buffer) {
   return btoa(String.fromCharCode(...new Uint8Array(buffer)))
@@ -56,33 +47,24 @@ function base64urlDecode(str) {
   return bytes.buffer;
 }
 
-// Returns true if platform biometrics are available on this device
 async function platformAuthAvailable() {
   if (typeof window === 'undefined') return false;
   if (typeof window.PublicKeyCredential === 'undefined') return false;
   try {
     return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 }
 
 async function registerBiometric(staffName, staffEmail) {
   console.log('[WebAuthn] WebAuthn available:', !!window.PublicKeyCredential);
-
   const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
   console.log('[WebAuthn] Platform authenticator available:', available);
-
   if (!available) throw new DOMException('No platform authenticator', 'NotSupportedError');
 
   const challenge = new Uint8Array(32);
   window.crypto.getRandomValues(challenge);
-
-  // user.id — stable, unique per staff member
   const userId = new TextEncoder().encode(staffEmail);
-
-  // rpId must exactly match window.location.hostname (critical for Android / traefik.me)
-  const rpId = window.location.hostname;
+  const rpId   = window.location.hostname;
   console.log('[WebAuthn] Using rpId:', rpId);
   console.log('[WebAuthn] Starting credential creation...');
 
@@ -92,19 +74,15 @@ async function registerBiometric(staffName, staffEmail) {
       publicKey: {
         challenge,
         rp: { name: 'Restaurant Staff Manager', id: rpId },
-        user: {
-          id:          userId,
-          name:        staffEmail,
-          displayName: staffName,
-        },
+        user: { id: userId, name: staffEmail, displayName: staffName },
         pubKeyCredParams: [
-          { type: 'public-key', alg: -7   }, // ES256
-          { type: 'public-key', alg: -257  }, // RS256
+          { type: 'public-key', alg: -7   },
+          { type: 'public-key', alg: -257  },
         ],
         authenticatorSelection: {
           authenticatorAttachment: 'platform',
-          userVerification:        'required',
-          residentKey:             'preferred',
+          userVerification: 'required',
+          residentKey: 'preferred',
         },
         timeout: 60000,
       },
@@ -113,7 +91,6 @@ async function registerBiometric(staffName, staffEmail) {
     console.log('[WebAuthn] WebAuthn error:', error.name, error.message);
     throw error;
   }
-
   console.log('[WebAuthn] Credential created:', credential?.id);
   return base64urlEncode(credential.rawId);
 }
@@ -121,14 +98,11 @@ async function registerBiometric(staffName, staffEmail) {
 async function verifyBiometric(credentialId) {
   const challenge = new Uint8Array(32);
   window.crypto.getRandomValues(challenge);
-
   const rpId = window.location.hostname;
   console.log('[WebAuthn] Verify — rpId:', rpId);
-
   const credential = await navigator.credentials.get({
     publicKey: {
-      challenge,
-      rpId,
+      challenge, rpId,
       allowCredentials: [{ type: 'public-key', id: base64urlDecode(credentialId) }],
       userVerification: 'required',
       timeout: 60000,
@@ -137,29 +111,40 @@ async function verifyBiometric(credentialId) {
   return !!credential;
 }
 
-// ── Install Banner ───────────────────────────────────────────────────────────
+// ── Brand logo SVG (fork + checkmark) ────────────────────────────────────────
+function BrandLogo({ size = 56 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+      {/* Fork tines */}
+      <line x1="14" y1="7"  x2="14" y2="19" stroke="white" strokeWidth="3"   strokeLinecap="round" />
+      <line x1="10" y1="7"  x2="10" y2="15" stroke="white" strokeWidth="3"   strokeLinecap="round" />
+      <line x1="18" y1="7"  x2="18" y2="15" stroke="white" strokeWidth="3"   strokeLinecap="round" />
+      {/* Fork curve */}
+      <path d="M10 15 Q14 19 18 15" stroke="white" strokeWidth="3" strokeLinecap="round" fill="none" />
+      {/* Fork handle */}
+      <line x1="14" y1="19" x2="14" y2="47" stroke="white" strokeWidth="3"   strokeLinecap="round" />
+      {/* Checkmark */}
+      <path d="M26 32 l6 6 L46 20" stroke="white" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+    </svg>
+  );
+}
+
+// ── Install Banner ────────────────────────────────────────────────────────────
 function InstallBanner() {
   const [deferredPrompt, setDeferredPrompt] = useState(null);
-  const [showIos, setShowIos]               = useState(false);
+  const [showIos,  setShowIos]              = useState(false);
   const [dismissed, setDismissed]           = useState(false);
 
   useEffect(() => {
-    const handler = (e) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
-    };
+    const handler = (e) => { e.preventDefault(); setDeferredPrompt(e); };
     window.addEventListener('beforeinstallprompt', handler);
-
     const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
-    const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches
-      || window.navigator.standalone;
-    if (isIos && !isInStandaloneMode) setShowIos(true);
-
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+    if (isIos && !isStandalone) setShowIos(true);
     return () => window.removeEventListener('beforeinstallprompt', handler);
   }, []);
 
-  if (dismissed) return null;
-  if (!deferredPrompt && !showIos) return null;
+  if (dismissed || (!deferredPrompt && !showIos)) return null;
 
   const handleInstall = async () => {
     if (!deferredPrompt) return;
@@ -170,48 +155,40 @@ function InstallBanner() {
   };
 
   return (
-    <div className="flex items-center gap-3 bg-indigo-600 text-white text-sm px-4 py-3 rounded-xl mb-4 shadow">
-      <span className="text-lg">📲</span>
-      <div className="flex-1">
+    <div
+      className="flex items-center gap-3 text-white text-sm px-4 py-3 rounded-xl mb-5"
+      style={{ backgroundColor: 'rgba(255,255,255,0.2)', backdropFilter: 'blur(8px)' }}
+    >
+      <span className="text-lg shrink-0">📲</span>
+      <span className="flex-1">
         {showIos
-          ? <span>Install app: tap <strong>Share</strong> → <strong>Add to Home Screen</strong></span>
-          : <span>Install <strong>RestaurantOS</strong> for quick access</span>
+          ? <>Tap <strong>Share</strong> → <strong>Add to Home Screen</strong></>
+          : <>Install <strong>RestaurantOS</strong> for quick access</>
         }
-      </div>
+      </span>
       {deferredPrompt && (
         <button
           onClick={handleInstall}
-          className="bg-white text-indigo-600 font-semibold text-xs px-3 py-1.5 rounded-lg shrink-0"
+          className="text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0"
+          style={{ backgroundColor: 'rgba(255,255,255,0.9)', color: '#EA580C' }}
         >
           Install
         </button>
       )}
-      <button
-        onClick={() => setDismissed(true)}
-        className="text-indigo-200 hover:text-white text-lg leading-none shrink-0 ml-1"
-        aria-label="Dismiss"
-      >
-        ×
-      </button>
+      <button onClick={() => setDismissed(true)} className="text-xl leading-none opacity-70 hover:opacity-100 shrink-0">×</button>
     </div>
   );
 }
 
-// ── Biometric Setup Modal ────────────────────────────────────────────────────
-// Checks platform authenticator availability on mount and skips silently if
-// WebAuthn is not available — staff can always use their code instead.
+// ── Biometric Setup Modal ─────────────────────────────────────────────────────
 function BiometricSetupModal({ staffName, staffEmail, staffCode, role, onDone }) {
-  // 'checking' → 'prompt' | 'enrolling' | 'done' | 'error'
   const [state, setState] = useState('checking');
 
   useEffect(() => {
-    platformAuthAvailable().then((available) => {
-      console.log('[WebAuthn] BiometricSetupModal — platform auth available:', available);
-      if (!available) {
-        onDone(); // skip silently — no error shown
-      } else {
-        setState('prompt');
-      }
+    platformAuthAvailable().then((ok) => {
+      console.log('[WebAuthn] BiometricSetupModal — available:', ok);
+      if (!ok) { onDone(); return; }
+      setState('prompt');
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -219,90 +196,57 @@ function BiometricSetupModal({ staffName, staffEmail, staffCode, role, onDone })
     setState('enrolling');
     try {
       const credentialId = await registerBiometric(staffName, staffEmail);
-      localStorage.setItem(QUICK_LOGIN_KEY, JSON.stringify({
-        name: staffName,
-        role,
-        email: staffEmail,
-        code:  staffCode,
-        credentialId,
-      }));
+      localStorage.setItem(QUICK_LOGIN_KEY, JSON.stringify({ name: staffName, role, email: staffEmail, code: staffCode, credentialId }));
       setState('done');
     } catch (err) {
       console.log('[WebAuthn] Enrolment failed:', err.name, err.message);
-      // User cancelled or hardware missing — skip silently
-      if (err.name === 'NotAllowedError' || err.name === 'NotSupportedError') {
-        onDone();
-      } else {
-        setState('error');
-      }
+      if (err.name === 'NotAllowedError' || err.name === 'NotSupportedError') { onDone(); return; }
+      setState('error');
     }
   };
 
-  // Don't render while checking or if we already decided to skip
   if (state === 'checking') return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-4">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}>
+      <div className="w-full max-w-sm rounded-2xl p-6 space-y-4" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
         {state === 'prompt' && (
           <>
             <div className="text-center">
-              <div className="text-4xl mb-2">🔐</div>
-              <h2 className="text-lg font-bold text-gray-900">Enable Fingerprint Login</h2>
-              <p className="text-sm text-gray-500 mt-1">
-                Log in instantly next time with just your fingerprint — no code needed.
-              </p>
+              <div className="text-4xl mb-3">🔐</div>
+              <h2 className="text-lg font-bold" style={{ color: 'var(--text)' }}>Enable Fingerprint Login</h2>
+              <p className="text-sm mt-1" style={{ color: 'var(--text-sub)' }}>Log in instantly next time with your fingerprint.</p>
             </div>
-            <button
-              onClick={handleEnroll}
-              className="w-full py-3 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 transition-colors"
-            >
+            <button onClick={handleEnroll} className="w-full py-3 text-white font-semibold rounded-xl" style={{ background: 'var(--color-primary)' }}>
               Set Up Fingerprint
             </button>
-            <button
-              onClick={onDone}
-              className="w-full py-2.5 text-sm text-gray-500 hover:text-gray-700"
-            >
-              Maybe later
-            </button>
+            <button onClick={onDone} className="w-full py-2.5 text-sm" style={{ color: 'var(--text-sub)' }}>Maybe later</button>
           </>
         )}
         {state === 'enrolling' && (
           <div className="text-center py-4">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto mb-3" />
-            <p className="text-sm text-gray-600">Follow your device prompt…</p>
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 mx-auto mb-3" style={{ borderColor: 'var(--color-primary)' }} />
+            <p className="text-sm" style={{ color: 'var(--text-sub)' }}>Follow your device prompt…</p>
           </div>
         )}
         {state === 'done' && (
           <>
             <div className="text-center">
-              <div className="text-4xl mb-2">✅</div>
-              <h2 className="text-lg font-bold text-gray-900">Fingerprint Enabled</h2>
-              <p className="text-sm text-gray-500 mt-1">You can now log in with a tap.</p>
+              <div className="text-4xl mb-3">✅</div>
+              <h2 className="text-lg font-bold" style={{ color: 'var(--text)' }}>Fingerprint Enabled</h2>
+              <p className="text-sm mt-1" style={{ color: 'var(--text-sub)' }}>You can now log in with a tap.</p>
             </div>
-            <button
-              onClick={onDone}
-              className="w-full py-3 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 transition-colors"
-            >
-              Continue
-            </button>
+            <button onClick={onDone} className="w-full py-3 text-white font-semibold rounded-xl" style={{ background: 'var(--color-primary)' }}>Continue</button>
           </>
         )}
         {state === 'error' && (
           <>
             <div className="text-center">
-              <div className="text-4xl mb-2">⚠️</div>
-              <h2 className="text-lg font-bold text-gray-900">Setup Failed</h2>
-              <p className="text-sm text-gray-500 mt-1">
-                Fingerprint setup failed. You can still log in with your staff code.
-              </p>
+              <div className="text-4xl mb-3">⚠️</div>
+              <h2 className="text-lg font-bold" style={{ color: 'var(--text)' }}>Setup Failed</h2>
+              <p className="text-sm mt-1" style={{ color: 'var(--text-sub)' }}>You can still log in with your staff code.</p>
             </div>
-            <button
-              onClick={onDone}
-              className="w-full py-3 bg-gray-100 text-gray-700 font-semibold rounded-xl hover:bg-gray-200 transition-colors"
-            >
-              Continue with Code
-            </button>
+            <button onClick={onDone} className="w-full py-3 font-semibold rounded-xl" style={{ backgroundColor: 'var(--surface2)', color: 'var(--text)' }}>Continue with Code</button>
           </>
         )}
       </div>
@@ -310,77 +254,62 @@ function BiometricSetupModal({ staffName, staffEmail, staffCode, role, onDone })
   );
 }
 
-// ── Quick Login Card (biometric returning-user) ─────────────────────────────
-// NOTE: This card only shows "Tap to Login" and NEVER navigates automatically.
-// Navigation only happens after the user taps the button and biometric succeeds.
+// ── Quick Login Card ──────────────────────────────────────────────────────────
 function QuickLoginCard() {
   const navigate = useNavigate();
   const [tapping, setTapping]               = useState(false);
   const [error, setError]                   = useState('');
-  const [authAvailable, setAuthAvailable]   = useState(null); // null = checking
+  const [authAvailable, setAuthAvailable]   = useState(null);
 
-  const stored = (() => {
-    try { return JSON.parse(localStorage.getItem(QUICK_LOGIN_KEY)); }
-    catch { return null; }
-  })();
+  const stored = (() => { try { return JSON.parse(localStorage.getItem(QUICK_LOGIN_KEY)); } catch { return null; } })();
 
-  // Check platform authenticator availability once on mount
   useEffect(() => {
     if (!stored?.credentialId) return;
-    platformAuthAvailable().then((ok) => {
-      console.log('[QuickLogin] Platform authenticator available:', ok);
-      setAuthAvailable(ok);
-    });
+    platformAuthAvailable().then((ok) => { console.log('[QuickLogin] Platform auth available:', ok); setAuthAvailable(ok); });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // No stored credential → nothing to show
-  if (!stored?.credentialId) return null;
-  // Still checking → don't flash anything
-  if (authAvailable === null) return null;
+  if (!stored?.credentialId || authAvailable === null) return null;
 
-  // ── Only called on explicit tap — never automatically ──────────────────────
   const handleTap = async () => {
-    setError('');
-    setTapping(true);
+    setError(''); setTapping(true);
     try {
       const ok = await verifyBiometric(stored.credentialId);
       if (!ok) throw new Error('Biometric verification returned false');
       await signInWithEmailAndPassword(auth, stored.email, stored.code);
-      // Store active session uid so AuthContext can validate it
-      // We'll get the uid from Firebase auth after sign-in
-      // Navigate based on the role we already know from localStorage
       navigate(dashboardForRole(stored.role), { replace: true });
     } catch (err) {
-      console.log('[QuickLogin] Biometric failed:', err.name, err.message);
+      console.log('[QuickLogin] Failed:', err.name, err.message);
       setError('Fingerprint not recognised. Use your staff code below.');
       setTapping(false);
     }
   };
 
   return (
-    <div className="mb-4 bg-indigo-50 border border-indigo-200 rounded-xl p-4 text-center space-y-3">
-      <p className="text-xs text-indigo-400 font-medium uppercase tracking-wide">Welcome back</p>
-      <p className="text-lg font-bold text-gray-900">{stored.name}</p>
-
+    <div
+      className="mb-5 rounded-xl p-4 text-center space-y-3"
+      style={{ backgroundColor: 'var(--color-primary-faint)', border: '1px solid var(--color-primary-light)' }}
+    >
+      <p className="text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--color-primary)' }}>Welcome back</p>
+      <p className="text-base font-bold" style={{ color: 'var(--text)' }}>{stored.name}</p>
       {authAvailable ? (
         <button
           onClick={handleTap}
           disabled={tapping}
-          className="flex items-center gap-2 mx-auto px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-60 transition-colors"
+          className="flex items-center gap-2 mx-auto px-5 py-2.5 text-white text-sm font-semibold rounded-xl disabled:opacity-60 transition-opacity"
+          style={{ background: 'var(--color-primary)' }}
         >
-          <span className="text-xl">👆</span>
+          <span className="text-lg">👆</span>
           {tapping ? 'Verifying…' : 'Tap to Login'}
         </button>
       ) : (
-        <p className="text-xs text-indigo-400">Use your staff code below to sign in.</p>
+        <p className="text-xs" style={{ color: 'var(--text-sub)' }}>Use your staff code below.</p>
       )}
-
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      {error && <p className="text-xs" style={{ color: 'var(--color-error)' }}>{error}</p>}
     </div>
   );
 }
 
-// ── Staff code login form ────────────────────────────────────────────────────
+// ── Staff Code Form ───────────────────────────────────────────────────────────
 function StaffLoginForm() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -390,143 +319,89 @@ function StaffLoginForm() {
   const [showBiometric, setShowBiometric] = useState(false);
   const biometricPayload = useRef(null);
 
-  // QR auto-login: read ?code= param on mount and PRE-FILL the input ONLY.
-  // Staff must still tap the Login button — no auto-submit.
+  // QR: pre-fill only — no auto-submit
   useEffect(() => {
     const qrCode = searchParams.get('code');
-    if (qrCode) {
-      setCode(qrCode.trim().toUpperCase());
-    }
+    if (qrCode) setCode(qrCode.trim().toUpperCase());
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-
     const entered = code.trim().toUpperCase();
-    console.log('Step 1 - Code entered:', entered);
+    console.log('Step 1 - Code:', entered);
     if (!entered) { setError('Please enter your staff code.'); return; }
-
     setSubmitting(true);
 
-    // ── Step 1: Firestore lookup ─────────────────────────────────────────────
     let staffDoc, staffData;
     try {
-      console.log('Step 2 - Querying Firestore /staff where staffCode ==', entered);
-      const snap = await getDocs(
-        query(collection(db, 'staff'), where('staffCode', '==', entered), limit(1))
-      );
-      console.log('Step 3 - Documents found:', snap.size);
+      const snap = await getDocs(query(collection(db, 'staff'), where('staffCode', '==', entered), limit(1)));
+      console.log('Step 2 - Docs found:', snap.size);
+      if (snap.empty) { setError('Invalid code. Please check and try again.'); setSubmitting(false); return; }
+      staffDoc = snap.docs[0];
+      staffData = staffDoc.data();
+    } catch (err) {
+      console.log('Firestore error:', err.code, err.message);
+      setError(err.code === 'permission-denied'
+        ? 'System configuration issue. Contact your manager.'
+        : 'Could not reach the server. Check your connection.');
+      setSubmitting(false); return;
+    }
 
-      if (snap.empty) {
-        console.log('Step 4 - No matching staff document found');
-        setError('Invalid code. Please check and try again.');
+    if (!staffData.isActive) {
+      setError('Your account has been deactivated. Contact your manager.');
+      setSubmitting(false); return;
+    }
+
+    const email = staffAuthEmail(entered);
+    try {
+      const cred = await signInWithEmailAndPassword(auth, email, entered);
+      const uid  = cred.user.uid;
+      console.log('Step 3 - Auth uid:', uid);
+
+      const userSnap = await getDoc(doc(db, 'users', uid));
+      if (!userSnap.exists()) {
+        await setDoc(doc(db, 'users', uid), {
+          name: staffData.name, email, role: staffData.role,
+          branchId: staffData.branchId, staffId: staffDoc.id, createdAt: serverTimestamp(),
+        });
+      }
+
+      localStorage.setItem(ACTIVE_SESSION_UID, uid);
+
+      const existing = (() => { try { return JSON.parse(localStorage.getItem(QUICK_LOGIN_KEY)); } catch { return null; } })();
+      const webAuthnOk = await platformAuthAvailable();
+
+      if (webAuthnOk && !existing?.credentialId) {
+        biometricPayload.current = { name: staffData.name, email, code: entered, role: staffData.role };
+        setShowBiometric(true);
         setSubmitting(false);
         return;
       }
 
-      staffDoc  = snap.docs[0];
-      staffData = staffDoc.data();
-      console.log('Step 5 - isActive:', staffData.isActive, '| authUid:', staffData.authUid);
-
-    } catch (queryErr) {
-      console.log('ERROR caught:', queryErr.code, queryErr.message);
-      if (queryErr.code === 'permission-denied') {
-        setError('System configuration issue. Please contact your manager.');
-      } else {
-        setError('Could not reach the server. Check your connection and try again.');
-      }
-      setSubmitting(false);
-      return;
-    }
-
-    if (!staffData.isActive) {
-      setError('Your account has been deactivated. Please contact your manager.');
-      setSubmitting(false);
-      return;
-    }
-
-    // ── Step 2: Firebase Auth sign-in ────────────────────────────────────────
-    const email = staffAuthEmail(entered);
-    console.log('Step 6 - Attempting Firebase auth sign in with email:', email);
-    try {
-      const cred = await signInWithEmailAndPassword(auth, email, entered);
-      const uid  = cred.user.uid;
-      console.log('Step 7 - Auth success, uid:', uid);
-
-      // ── Step 3: Ensure /users/{uid} exists ─────────────────────────────────
-      const userSnap = await getDoc(doc(db, 'users', uid));
-      if (!userSnap.exists()) {
-        console.log('Step 8 - /users doc missing, creating from staff document');
-        await setDoc(doc(db, 'users', uid), {
-          name:      staffData.name,
-          email,
-          role:      staffData.role,
-          branchId:  staffData.branchId,
-          staffId:   staffDoc.id,
-          createdAt: serverTimestamp(),
-        });
-      }
-
-      // ── Step 4: Record active session uid (session lock) ──────────────────
-      localStorage.setItem(ACTIVE_SESSION_UID, uid);
-
-      // ── Step 5: Offer biometric enrolment if not already stored ───────────
-      const existingQuickLogin = (() => {
-        try { return JSON.parse(localStorage.getItem(QUICK_LOGIN_KEY)); }
-        catch { return null; }
-      })();
-
-      const webAuthnAvailable = await platformAuthAvailable();
-
-      if (webAuthnAvailable && !existingQuickLogin?.credentialId) {
-        biometricPayload.current = {
-          name:  staffData.name,
-          email,
-          code:  entered,
-          role:  staffData.role,
-        };
-        setShowBiometric(true);
-        setSubmitting(false);
-        return; // navigation happens in onDone below
-      }
-
-      // If already enrolled, refresh stored code/email in case they changed
-      if (existingQuickLogin) {
-        // Clear old data first, then write fresh — never mix two staff members
+      if (existing) {
         localStorage.removeItem(QUICK_LOGIN_KEY);
-        localStorage.setItem(QUICK_LOGIN_KEY, JSON.stringify({
-          ...existingQuickLogin,
-          code:  entered,
-          email,
-          name:  staffData.name,
-          role:  staffData.role,
-        }));
+        localStorage.setItem(QUICK_LOGIN_KEY, JSON.stringify({ ...existing, code: entered, email, name: staffData.name, role: staffData.role }));
       }
 
-      // ── Step 6: Navigate based on role — only here, never on render ───────
       navigate(dashboardForRole(staffData.role), { replace: true });
-
-    } catch (authErr) {
-      console.log('ERROR caught:', authErr.code, authErr.message);
-      if (authErr.code === 'auth/user-not-found' || authErr.code === 'auth/invalid-credential') {
-        setError('Login account not found. Please ask your manager to reset your staff code.');
-      } else if (authErr.code === 'auth/wrong-password') {
-        setError('Code mismatch. Please ask your manager to reset your staff code.');
-      } else {
-        setError('Login failed. Please try again or contact your manager.');
-      }
+    } catch (err) {
+      console.log('Auth error:', err.code, err.message);
+      setError(
+        err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential'
+          ? 'Login account not found. Ask your manager to reset your code.'
+          : err.code === 'auth/wrong-password'
+          ? 'Code mismatch. Ask your manager to reset your code.'
+          : 'Login failed. Please try again.'
+      );
       setSubmitting(false);
     }
   };
 
   return (
     <>
-      <form id="staff-login-form" onSubmit={handleSubmit} className="space-y-5">
+      <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">
-            Staff Code
-          </label>
           <input
             type="text"
             required
@@ -534,16 +409,30 @@ function StaffLoginForm() {
             onChange={(e) => { setCode(e.target.value.toUpperCase()); setError(''); }}
             placeholder="STF-XXXX"
             maxLength={8}
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg text-center text-xl font-mono font-bold tracking-widest uppercase focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+            className="w-full text-center font-mono font-bold text-xl uppercase tracking-widest transition-all"
+            style={{
+              height: '52px',
+              borderRadius: '8px',
+              border: error ? '1.5px solid var(--color-error)' : '1.5px solid var(--border2)',
+              backgroundColor: 'var(--surface)',
+              color: 'var(--text)',
+              outline: 'none',
+              padding: '0 16px',
+            }}
+            onFocus={e => { e.target.style.borderColor = 'var(--color-primary)'; e.target.style.boxShadow = '0 0 0 3px rgba(249,115,22,0.15)'; }}
+            onBlur={e => { e.target.style.borderColor = error ? 'var(--color-error)' : 'var(--border2)'; e.target.style.boxShadow = 'none'; }}
           />
-          {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+          {error && (
+            <p className="mt-2 text-sm" style={{ color: 'var(--color-error)' }}>{error}</p>
+          )}
         </div>
         <button
           type="submit"
           disabled={submitting}
-          className="w-full py-3 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors text-sm"
+          className="w-full text-white font-semibold text-sm transition-opacity disabled:opacity-60"
+          style={{ height: '52px', borderRadius: '8px', background: submitting ? 'var(--color-primary-dark)' : 'var(--color-primary)' }}
         >
-          {submitting ? 'Checking code…' : 'Sign in with Code'}
+          {submitting ? 'Checking…' : 'Login'}
         </button>
       </form>
 
@@ -555,7 +444,6 @@ function StaffLoginForm() {
           role={biometricPayload.current.role}
           onDone={() => {
             setShowBiometric(false);
-            // Navigate now — user has finished the biometric setup flow
             navigate(dashboardForRole(biometricPayload.current?.role), { replace: true });
           }}
         />
@@ -564,14 +452,24 @@ function StaffLoginForm() {
   );
 }
 
-// ── Owner / Admin email+password form ────────────────────────────────────────
-function OwnerLoginForm() {
+// ── Admin / Owner Form ────────────────────────────────────────────────────────
+function AdminLoginForm() {
   const { login } = useAuth();
   const navigate  = useNavigate();
   const [form, setForm]         = useState({ email: '', password: '' });
   const [submitting, setSubmitting] = useState(false);
 
-  const handleChange = (e) => setForm((f) => ({ ...f, [e.target.name]: e.target.value }));
+  const inputStyle = {
+    height: '52px',
+    borderRadius: '8px',
+    border: '1.5px solid var(--border2)',
+    backgroundColor: 'var(--surface)',
+    color: 'var(--text)',
+    padding: '0 16px',
+    width: '100%',
+    outline: 'none',
+    fontSize: '14px',
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -579,78 +477,81 @@ function OwnerLoginForm() {
     try {
       const cred     = await login(form.email.trim(), form.password);
       const uid      = cred.user.uid;
-
-      // Record active session uid
       localStorage.setItem(ACTIVE_SESSION_UID, uid);
-
-      // Fetch profile to determine which dashboard to navigate to
-      const userSnap = await getDoc(doc(db, 'users', uid));
-      const role     = userSnap.data()?.role ?? 'staff';
+      const snap     = await getDoc(doc(db, 'users', uid));
+      const role     = snap.data()?.role ?? 'staff';
       navigate(dashboardForRole(role), { replace: true });
     } catch (err) {
-      const msg =
+      toast.error(
         err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password'
           ? 'Invalid email or password.'
           : err.code === 'auth/user-not-found'
           ? 'No account found with this email.'
-          : 'Login failed. Please try again.';
-      toast.error(msg);
+          : 'Login failed. Please try again.'
+      );
       setSubmitting(false);
     }
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-5">
+    <form onSubmit={handleSubmit} className="space-y-4">
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1.5">Email address</label>
+        <label className="block text-sm font-medium mb-1.5" style={{ color: 'var(--text-sub)' }}>
+          Email address
+        </label>
         <input
           type="email"
-          name="email"
           required
           value={form.email}
-          onChange={handleChange}
+          onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
           placeholder="you@restaurant.com"
-          className="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+          style={inputStyle}
+          onFocus={e => { e.target.style.borderColor = 'var(--color-primary)'; e.target.style.boxShadow = '0 0 0 3px rgba(249,115,22,0.15)'; }}
+          onBlur={e => { e.target.style.borderColor = 'var(--border2)'; e.target.style.boxShadow = 'none'; }}
         />
       </div>
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1.5">Password</label>
+        <label className="block text-sm font-medium mb-1.5" style={{ color: 'var(--text-sub)' }}>
+          Password
+        </label>
         <input
           type="password"
-          name="password"
           required
           value={form.password}
-          onChange={handleChange}
+          onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
           placeholder="••••••••"
-          className="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+          style={inputStyle}
+          onFocus={e => { e.target.style.borderColor = 'var(--color-primary)'; e.target.style.boxShadow = '0 0 0 3px rgba(249,115,22,0.15)'; }}
+          onBlur={e => { e.target.style.borderColor = 'var(--border2)'; e.target.style.boxShadow = 'none'; }}
         />
       </div>
       <button
         type="submit"
         disabled={submitting}
-        className="w-full py-3 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors text-sm"
+        className="w-full text-white font-semibold text-sm transition-opacity disabled:opacity-60"
+        style={{ height: '52px', borderRadius: '8px', background: 'var(--color-primary)' }}
       >
-        {submitting ? 'Signing in…' : 'Sign in'}
+        {submitting ? 'Signing in…' : 'Sign In'}
       </button>
     </form>
   );
 }
 
-// ── Root Login page ──────────────────────────────────────────────────────────
+// ── Root Login page ───────────────────────────────────────────────────────────
 export default function Login() {
   const settingUp = useFirstTimeSetup();
   const [tab, setTab] = useState('staff');
 
   if (settingUp) {
     return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
-        <div className="text-center">
-          <div className="inline-flex items-center justify-center w-14 h-14 bg-indigo-600 rounded-2xl mb-6">
-            <span className="text-white text-2xl font-bold">R</span>
+      <div className="min-h-screen flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #F97316 0%, #C2410C 100%)' }}>
+        <div className="text-center text-white">
+          <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <BrandLogo size={40} />
           </div>
-          <h1 className="text-2xl font-bold text-white mb-2">RestaurantOS</h1>
-          <div className="flex items-center justify-center gap-2 text-gray-400 text-sm">
-            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-indigo-400" />
+          <h1 className="text-2xl font-bold mb-3">RestaurantOS</h1>
+          <div className="flex items-center justify-center gap-2 text-white/70 text-sm">
+            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white/60" />
             Setting up…
           </div>
         </div>
@@ -659,67 +560,109 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <InstallBanner />
+    <div className="min-h-screen flex flex-col md:flex-row">
 
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 bg-indigo-600 rounded-2xl mb-4">
-            <span className="text-white text-2xl font-bold">R</span>
-          </div>
-          <h1 className="text-3xl font-bold text-white">RestaurantOS</h1>
-          <p className="text-gray-400 mt-1 text-sm">Staff Task Management Platform</p>
+      {/* ── Left / Top: Brand panel ──────────────────────────────────────── */}
+      <div
+        className="flex flex-col items-center justify-center px-8 py-12 md:w-[45%] md:min-h-screen"
+        style={{ background: 'linear-gradient(145deg, #F97316 0%, #EA580C 55%, #C2410C 100%)' }}
+      >
+        {/* Install banner — only on the brand panel (mobile top area) */}
+        <div className="w-full max-w-xs md:max-w-sm">
+          <InstallBanner />
         </div>
 
-        <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
-          <div className="flex border-b border-gray-200">
-            <button
-              onClick={() => setTab('staff')}
-              className={`flex-1 py-3.5 text-sm font-medium transition-colors ${
-                tab === 'staff'
-                  ? 'bg-white text-indigo-600 border-b-2 border-indigo-600'
-                  : 'bg-gray-50 text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              Staff Login
-            </button>
-            <button
-              onClick={() => setTab('owner')}
-              className={`flex-1 py-3.5 text-sm font-medium transition-colors ${
-                tab === 'owner'
-                  ? 'bg-white text-indigo-600 border-b-2 border-indigo-600'
-                  : 'bg-gray-50 text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              Owner / Admin
-            </button>
-          </div>
-
-          <div className="p-8">
-            {tab === 'staff' ? (
-              <>
-                <QuickLoginCard />
-                <p className="text-sm text-gray-500 mb-6 text-center">
-                  Enter the STF-XXXX code provided by your manager.
-                </p>
-                <StaffLoginForm />
-              </>
-            ) : (
-              <>
-                <h2 className="text-lg font-semibold text-gray-900 mb-6">
-                  Sign in to your account
-                </h2>
-                <OwnerLoginForm />
-              </>
-            )}
-          </div>
+        {/* Logo icon */}
+        <div
+          className="w-20 h-20 rounded-[22px] flex items-center justify-center mb-6"
+          style={{ backgroundColor: 'rgba(255,255,255,0.18)', backdropFilter: 'blur(8px)' }}
+        >
+          <BrandLogo size={48} />
         </div>
 
-        <p className="text-center text-xs text-gray-500 mt-6">
-          {tab === 'staff'
-            ? 'Lost your code? Contact your manager or owner.'
-            : 'Contact your administrator for account access.'}
+        {/* App name */}
+        <h1 className="text-white font-bold text-3xl md:text-4xl tracking-tight mb-3 text-center">
+          RestaurantOS
+        </h1>
+
+        {/* Tagline */}
+        <p className="text-white/75 text-base md:text-lg text-center leading-relaxed max-w-xs">
+          Smart task management<br className="hidden md:block" /> for your team
         </p>
+
+        {/* Feature dots — desktop only */}
+        <div className="hidden md:flex flex-col gap-3 mt-10 w-full max-w-xs">
+          {[
+            ['✓', 'Real-time task tracking'],
+            ['✓', 'Staff check-in & shifts'],
+            ['✓', 'Photo verification'],
+          ].map(([icon, text]) => (
+            <div key={text} className="flex items-center gap-3 text-white/80 text-sm">
+              <span className="text-white font-bold">{icon}</span>
+              {text}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Right / Bottom: Form panel ───────────────────────────────────── */}
+      <div
+        className="flex-1 flex items-center justify-center px-6 py-10 md:px-12"
+        style={{ backgroundColor: 'var(--bg)' }}
+      >
+        <div className="w-full max-w-sm">
+
+          {/* Tabs */}
+          <div
+            className="flex mb-8 p-1 rounded-xl"
+            style={{ backgroundColor: 'var(--surface2)', border: '1px solid var(--border)' }}
+          >
+            {[['staff', 'Staff Login'], ['admin', 'Admin Login']].map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setTab(key)}
+                className="flex-1 py-2.5 text-sm font-medium rounded-lg transition-all"
+                style={tab === key
+                  ? { backgroundColor: 'var(--surface)', color: 'var(--color-primary)', boxShadow: 'var(--shadow)', fontWeight: 600 }
+                  : { backgroundColor: 'transparent', color: 'var(--text-sub)' }
+                }
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Tab content */}
+          {tab === 'staff' ? (
+            <div>
+              <QuickLoginCard />
+              <div className="mb-6">
+                <h2 className="text-2xl font-bold mb-1" style={{ color: 'var(--text)' }}>Welcome back</h2>
+                <p className="text-sm" style={{ color: 'var(--text-sub)' }}>
+                  Enter your staff code to continue
+                </p>
+              </div>
+              <StaffLoginForm />
+              <p className="text-xs text-center mt-5" style={{ color: 'var(--text-faint)' }}>
+                Lost your code? Ask your manager or owner.
+              </p>
+            </div>
+          ) : (
+            <div>
+              <div className="mb-6">
+                <h2 className="text-2xl font-bold mb-1" style={{ color: 'var(--text)' }}>Admin Login</h2>
+                <p className="text-sm" style={{ color: 'var(--text-sub)' }}>
+                  Sign in with your owner or manager account
+                </p>
+              </div>
+              <AdminLoginForm />
+              <p className="text-xs text-center mt-5" style={{ color: 'var(--text-faint)' }}>
+                Contact your administrator for access.
+              </p>
+            </div>
+          )}
+
+        </div>
       </div>
     </div>
   );

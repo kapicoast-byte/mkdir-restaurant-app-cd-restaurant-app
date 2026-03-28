@@ -2,11 +2,11 @@
 // - Initialises the StaffContext (theme + language)
 // - Full-height mobile-first layout: scrollable content above fixed bottom nav
 // - Bottom nav: 80px, large tap targets, 4 tabs
-import { useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useTranslation } from '../../hooks/useTranslation';
 import { StaffProvider, THEMES } from '../../context/StaffContext';
 import { useAuth } from '../../context/AuthContext';
+import { useTheme } from '../../context/ThemeContext';
 import { LANGUAGES } from '../../i18n/translations';
 import toast from 'react-hot-toast';
 
@@ -19,22 +19,11 @@ const NAV = [
 ];
 
 export default function StaffLayout() {
-  const { logout } = useAuth();
-  const navigate   = useNavigate();
-  const { t, lang }= useTranslation();
-
-  // ── Theme (persisted in localStorage) ─────────────────────────────────────
-  const [isDark, setIsDark] = useState(
-    () => localStorage.getItem('staffTheme') === 'dark'
-  );
-
-  const toggleTheme = () =>
-    setIsDark((d) => {
-      const next = !d;
-      localStorage.setItem('staffTheme', next ? 'dark' : 'light');
-      return next;
-    });
-
+  const { logout }           = useAuth();
+  const navigate             = useNavigate();
+  const { t, lang }          = useTranslation();
+  // Global theme — drives html.dark class via ThemeContext
+  const { isDark, toggleTheme } = useTheme();
   const th = isDark ? THEMES.dark : THEMES.light;
 
   // Text direction: Urdu is RTL

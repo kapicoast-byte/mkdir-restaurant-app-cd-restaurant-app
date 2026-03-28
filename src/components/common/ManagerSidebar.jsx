@@ -1,74 +1,80 @@
-// Dark sidebar navigation for manager role
-import { NavLink, useNavigate } from 'react-router-dom';
+// Manager sidebar — always dark, orange accent
+import { NavLink } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import toast from 'react-hot-toast';
 
 const navItems = [
-  { to: '/manager/dashboard', label: 'Dashboard', icon: '⬜' },
-  { to: '/manager/tasks', label: 'Tasks', icon: '✅' },
-  { to: '/manager/staff', label: 'Staff', icon: '👥' },
-  { to: '/manager/shifts', label: 'Shifts', icon: '🗓️' },
-  { to: '/manager/checkins', label: 'Check-ins', icon: '📍' },
+  { to: '/manager/dashboard', label: 'Dashboard', icon: '▦'  },
+  { to: '/manager/tasks',     label: 'Tasks',      icon: '✓'  },
+  { to: '/manager/staff',     label: 'Staff',      icon: '👥' },
+  { to: '/manager/shifts',    label: 'Shifts',     icon: '🗓️' },
+  { to: '/manager/checkins',  label: 'Check-ins',  icon: '📍' },
 ];
 
 export default function ManagerSidebar() {
   const { userProfile, logout } = useAuth();
-  const navigate = useNavigate();
-
-  const handleLogout = async () => {
-    try {
-      await logout();
-      navigate('/login');
-      toast.success('Signed out successfully');
-    } catch {
-      toast.error('Failed to sign out');
-    }
-  };
 
   return (
-    <aside className="w-64 min-h-screen bg-gray-900 text-white flex flex-col flex-shrink-0">
+    <aside
+      className="w-60 min-h-screen flex flex-col flex-shrink-0"
+      style={{ backgroundColor: 'var(--sidebar-bg)', borderRight: '1px solid var(--sidebar-border)' }}
+    >
       {/* Brand */}
-      <div className="px-6 py-5 border-b border-gray-700">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-emerald-500 rounded-lg flex items-center justify-center text-sm font-bold">R</div>
-          <span className="font-semibold text-lg">RestaurantOS</span>
+      <div className="px-5 py-5" style={{ borderBottom: '1px solid var(--sidebar-border)' }}>
+        <div className="flex items-center gap-2.5">
+          <div
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold text-white"
+            style={{ background: 'var(--color-primary)' }}
+          >
+            R
+          </div>
+          <span className="font-semibold text-base" style={{ color: 'var(--sidebar-text)' }}>
+            RestaurantOS
+          </span>
         </div>
-        <div className="mt-2 text-xs text-gray-400">Manager Portal</div>
+        <div className="mt-1.5 text-xs" style={{ color: 'var(--sidebar-text-sub)' }}>
+          Manager Portal
+        </div>
       </div>
 
       {/* User info */}
-      <div className="px-6 py-4 border-b border-gray-700">
-        <div className="text-sm font-medium text-white">{userProfile?.name ?? 'Manager'}</div>
-        <div className="text-xs text-gray-400 mt-0.5 capitalize">{userProfile?.role ?? 'manager'}</div>
+      <div className="px-5 py-3.5" style={{ borderBottom: '1px solid var(--sidebar-border)' }}>
+        <div className="text-sm font-medium" style={{ color: 'var(--sidebar-text)' }}>
+          {userProfile?.name ?? 'Manager'}
+        </div>
+        <div className="text-xs mt-0.5 capitalize" style={{ color: 'var(--sidebar-text-sub)' }}>
+          {userProfile?.role ?? 'manager'}
+        </div>
       </div>
 
-      {/* Nav items */}
-      <nav className="flex-1 px-3 py-4 space-y-1">
+      {/* Nav */}
+      <nav className="flex-1 px-3 py-3 space-y-0.5">
         {navItems.map(({ to, label, icon }) => (
           <NavLink
             key={to}
             to={to}
-            className={({ isActive }) =>
-              `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                isActive
-                  ? 'bg-emerald-600 text-white'
-                  : 'text-gray-300 hover:bg-gray-700 hover:text-white'
-              }`
+            className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors"
+            style={({ isActive }) =>
+              isActive
+                ? { backgroundColor: 'var(--color-primary)', color: '#FFFFFF' }
+                : { color: 'var(--sidebar-text)' }
             }
           >
-            <span className="text-base">{icon}</span>
+            <span className="text-base leading-none">{icon}</span>
             {label}
           </NavLink>
         ))}
       </nav>
 
       {/* Sign out */}
-      <div className="px-3 py-4 border-t border-gray-700">
+      <div className="px-3 pb-4" style={{ borderTop: '1px solid var(--sidebar-border)', paddingTop: '12px' }}>
         <button
-          onClick={handleLogout}
-          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
+          onClick={() => logout()}
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors"
+          style={{ color: 'var(--sidebar-text-sub)' }}
+          onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'var(--sidebar-hover)'; e.currentTarget.style.color = 'var(--sidebar-text)'; }}
+          onMouseLeave={e => { e.currentTarget.style.backgroundColor = ''; e.currentTarget.style.color = 'var(--sidebar-text-sub)'; }}
         >
-          <span>🚪</span>
+          <span>↩</span>
           Sign Out
         </button>
       </div>

@@ -4,9 +4,12 @@ import ManagerSidebar from '../../components/common/ManagerSidebar';
 
 export default function ManagerLayout() {
   return (
-    <div className="flex min-h-screen bg-gray-100">
+    <div className="flex min-h-screen" style={{ backgroundColor: 'var(--bg)' }}>
       <ManagerSidebar />
-      <main className="flex-1 p-8 overflow-auto">
+      <main
+        className="flex-1 p-8 overflow-auto"
+        style={{ backgroundColor: 'var(--bg)' }}
+      >
         <Outlet />
       </main>
     </div>
