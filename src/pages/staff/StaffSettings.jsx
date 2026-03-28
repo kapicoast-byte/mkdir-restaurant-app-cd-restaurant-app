@@ -59,9 +59,15 @@ export default function StaffSettings() {
   const { userProfile, logout }               = useAuth();
   const navigate = useNavigate();
 
-  const [saving,      setSaving]      = useState(false);
-  const [copied,      setCopied]      = useState(false);
-  const [showLogout,  setShowLogout]  = useState(false);
+  const [saving,           setSaving]           = useState(false);
+  const [copied,           setCopied]           = useState(false);
+  const [showLogout,       setShowLogout]       = useState(false);
+  const [showRemoveDevice, setShowRemoveDevice] = useState(false);
+
+  const hasQuickLogin = (() => {
+    try { return !!JSON.parse(localStorage.getItem('staffQuickLogin'))?.credentialId; }
+    catch { return false; }
+  })();
 
   const staffId   = userProfile?.staffId   ?? null;
   const staffCode = userProfile?.staffCode ?? null;
@@ -218,6 +224,27 @@ export default function StaffSettings() {
         </div>
       </div>
 
+      {/* ── Device section ─────────────────────────────────────────────── */}
+      {hasQuickLogin && (
+        <>
+          <SectionTitle label="This Device" />
+          <div className={`${th.cardBg} border-y ${th.border} px-5 py-4`}>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className={`text-sm font-medium ${th.text}`}>Fingerprint Login</p>
+                <p className={`text-xs mt-0.5 ${th.textSub}`}>Biometric quick-login is enabled on this device</p>
+              </div>
+              <button
+                onClick={() => setShowRemoveDevice(true)}
+                className="ml-3 px-3 py-1.5 rounded-lg text-xs font-semibold text-red-600 border border-red-200 bg-red-50 active:bg-red-100 transition-colors"
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
       {/* ── Log Out button ─────────────────────────────────────────────── */}
       <div className="px-5 py-6">
         <button
@@ -229,6 +256,42 @@ export default function StaffSettings() {
       </div>
 
       <div className="h-4" />
+
+      {/* ── Remove device confirm modal ───────────────────────────────── */}
+      {showRemoveDevice && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4" onClick={() => setShowRemoveDevice(false)}>
+          <div
+            className={`w-full max-w-sm rounded-2xl p-6 ${th.cardBg} shadow-2xl`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-center mb-5">
+              <div className="text-4xl mb-3">🗑️</div>
+              <h3 className={`font-bold text-lg ${th.text}`}>Remove This Device?</h3>
+              <p className={`text-sm mt-1 ${th.textSub}`}>
+                Fingerprint login will be removed from this device. You can re-enable it by logging in with your staff code.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowRemoveDevice(false)}
+                className={`flex-1 py-3 rounded-xl border text-sm font-medium ${th.border} ${th.text}`}
+              >
+                {t('cancel')}
+              </button>
+              <button
+                onClick={() => {
+                  localStorage.removeItem('staffQuickLogin');
+                  setShowRemoveDevice(false);
+                  toast.success('Device removed');
+                }}
+                className="flex-1 py-3 rounded-xl bg-red-600 text-white text-sm font-semibold"
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Logout confirm modal ───────────────────────────────────────── */}
       {showLogout && (

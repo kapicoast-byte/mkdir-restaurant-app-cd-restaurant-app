@@ -19,7 +19,7 @@
 //   • If authUid missing: createUser(secondaryAuth) → signOut → get uid
 //   • updateDoc /staff/{id} { staffCode, authUid }
 //   • Show new code to owner in a modal with copy button
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   collection, onSnapshot, addDoc, updateDoc, setDoc,
   doc, serverTimestamp, query, orderBy, getDoc
@@ -31,6 +31,7 @@ import {
   updateEmail,
   signOut,
 } from 'firebase/auth';
+import { QRCodeCanvas, QRCodeSVG } from 'qrcode.react';
 import { db, secondaryAuth } from '../../firebase/config';
 import toast from 'react-hot-toast';
 import PageHeader from '../../components/common/PageHeader';
@@ -67,6 +68,8 @@ export default function OwnerStaff() {
   const [codeViewTarget, setCodeViewTarget]     = useState(null);
   const [resettingId, setResettingId]   = useState(null);
   const [copied, setCopied]             = useState(false);
+  const [qrTarget, setQrTarget]         = useState(null);
+  const qrCanvasRef                     = useRef(null);
 
   useEffect(() => {
     const unsubStaff = onSnapshot(
@@ -336,6 +339,12 @@ export default function OwnerStaff() {
                         Edit
                       </button>
                       <button
+                        onClick={() => setQrTarget(s)}
+                        className="text-purple-600 hover:text-purple-800 font-medium text-xs"
+                      >
+                        QR Code
+                      </button>
+                      <button
                         onClick={() => handleResetCode(s)}
                         disabled={resettingId === s.id}
                         className="text-amber-600 hover:text-amber-800 font-medium text-xs disabled:opacity-50"
@@ -466,6 +475,100 @@ export default function OwnerStaff() {
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* QR Code Modal */}
+      <Modal
+        isOpen={!!qrTarget}
+        onClose={() => setQrTarget(null)}
+        title="Staff QR Code"
+        size="sm"
+      >
+        {qrTarget && (() => {
+          const loginUrl = `${window.location.origin}/login?code=${qrTarget.staffCode}`;
+
+          const handleDownload = () => {
+            const canvas = document.getElementById('qr-download-canvas');
+            if (!canvas) return;
+            const link = document.createElement('a');
+            link.download = `${qrTarget.name.replace(/\s+/g, '-')}-qr.png`;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+          };
+
+          const handlePrint = () => {
+            const printWindow = window.open('', '_blank', 'width=400,height=500');
+            printWindow.document.write(`
+              <!DOCTYPE html>
+              <html>
+                <head>
+                  <title>QR Code — ${qrTarget.name}</title>
+                  <style>
+                    body { font-family: system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: white; }
+                    h2 { font-size: 22px; margin-bottom: 4px; }
+                    p  { color: #6b7280; font-size: 14px; margin-bottom: 20px; }
+                    code { font-family: monospace; font-size: 18px; font-weight: bold; letter-spacing: 4px; background: #f3f4f6; padding: 6px 14px; border-radius: 8px; margin-top: 16px; display: inline-block; }
+                  </style>
+                </head>
+                <body>
+                  <h2>${qrTarget.name}</h2>
+                  <p>Scan to log in instantly</p>
+                  <img src="${document.getElementById('qr-download-canvas')?.toDataURL('image/png')}" width="200" height="200" />
+                  <code>${qrTarget.staffCode}</code>
+                </body>
+              </html>
+            `);
+            printWindow.document.close();
+            printWindow.focus();
+            printWindow.print();
+          };
+
+          return (
+            <div className="space-y-4">
+              <div className="flex flex-col items-center gap-3 bg-gray-50 rounded-xl p-6">
+                <p className="text-sm font-semibold text-gray-700">{qrTarget.name}</p>
+                {/* Visible SVG QR */}
+                <QRCodeSVG
+                  value={loginUrl}
+                  size={200}
+                  bgColor="#ffffff"
+                  fgColor="#1e1b4b"
+                  level="M"
+                  includeMargin
+                />
+                {/* Hidden canvas for download/print */}
+                <QRCodeCanvas
+                  id="qr-download-canvas"
+                  value={loginUrl}
+                  size={400}
+                  bgColor="#ffffff"
+                  fgColor="#1e1b4b"
+                  level="M"
+                  includeMargin
+                  style={{ display: 'none' }}
+                />
+                <p className="font-mono text-lg font-bold tracking-widest text-gray-800">
+                  {qrTarget.staffCode}
+                </p>
+                <p className="text-xs text-gray-400 text-center">Scan with camera to open login page</p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleDownload}
+                  className="flex-1 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
+                >
+                  Download PNG
+                </button>
+                <button
+                  onClick={handlePrint}
+                  className="flex-1 py-2 text-sm font-medium text-indigo-600 border border-indigo-300 rounded-lg hover:bg-indigo-50 transition-colors"
+                >
+                  Print
+                </button>
+              </div>
+            </div>
+          );
+        })()}
       </Modal>
 
       {/* Deactivate confirm */}
