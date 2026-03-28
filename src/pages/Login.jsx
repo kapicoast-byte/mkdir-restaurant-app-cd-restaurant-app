@@ -45,40 +45,85 @@ function base64urlDecode(str) {
   return bytes.buffer;
 }
 
-async function registerBiometric(staffName, staffEmail) {
-  const challenge = crypto.getRandomValues(new Uint8Array(32));
-  const userId    = crypto.getRandomValues(new Uint8Array(16));
+// Returns true if platform biometrics are available on this device
+async function platformAuthAvailable() {
+  if (typeof window === 'undefined') return false;
+  if (typeof window.PublicKeyCredential === 'undefined') return false;
+  try {
+    return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+  } catch {
+    return false;
+  }
+}
 
-  const credential = await navigator.credentials.create({
-    publicKey: {
-      challenge,
-      rp:   { name: 'RestaurantOS' },
-      user: {
-        id:          userId,
-        name:        staffEmail,
-        displayName: staffName,
+async function registerBiometric(staffName, staffEmail) {
+  console.log('[WebAuthn] WebAuthn available:', !!window.PublicKeyCredential);
+
+  const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+  console.log('[WebAuthn] Platform authenticator available:', available);
+
+  if (!available) throw new DOMException('No platform authenticator', 'NotSupportedError');
+
+  // challenge must be a Uint8Array
+  const challenge = new Uint8Array(32);
+  window.crypto.getRandomValues(challenge);
+
+  // user.id must be a Uint8Array — use the email as a stable, unique identifier
+  const userId = new TextEncoder().encode(staffEmail);
+
+  // rpId must exactly match window.location.hostname (critical for Android / traefik.me)
+  const rpId = window.location.hostname;
+  console.log('[WebAuthn] Using rpId:', rpId);
+  console.log('[WebAuthn] Starting credential creation...');
+
+  let credential;
+  try {
+    credential = await navigator.credentials.create({
+      publicKey: {
+        challenge,
+        rp: {
+          name: 'Restaurant Staff Manager',
+          id:   rpId,
+        },
+        user: {
+          id:          userId,
+          name:        staffEmail,
+          displayName: staffName,
+        },
+        pubKeyCredParams: [
+          { type: 'public-key', alg: -7   }, // ES256
+          { type: 'public-key', alg: -257  }, // RS256
+        ],
+        authenticatorSelection: {
+          authenticatorAttachment: 'platform',
+          userVerification:        'required',
+          residentKey:             'preferred',
+        },
+        timeout: 60000,
       },
-      pubKeyCredParams: [
-        { type: 'public-key', alg: -7  },  // ES256
-        { type: 'public-key', alg: -257 }, // RS256
-      ],
-      authenticatorSelection: {
-        authenticatorAttachment: 'platform',
-        userVerification: 'preferred',
-      },
-      timeout: 60000,
-    },
-  });
+    });
+  } catch (error) {
+    console.log('[WebAuthn] WebAuthn error:', error.name, error.message);
+    throw error;
+  }
+
+  console.log('[WebAuthn] Credential created:', credential?.id);
   return base64urlEncode(credential.rawId);
 }
 
 async function verifyBiometric(credentialId) {
-  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  const challenge = new Uint8Array(32);
+  window.crypto.getRandomValues(challenge);
+
+  const rpId = window.location.hostname;
+  console.log('[WebAuthn] Verify — rpId:', rpId);
+
   const credential = await navigator.credentials.get({
     publicKey: {
       challenge,
+      rpId,
       allowCredentials: [{ type: 'public-key', id: base64urlDecode(credentialId) }],
-      userVerification: 'preferred',
+      userVerification: 'required',
       timeout: 60000,
     },
   });
@@ -148,8 +193,23 @@ function InstallBanner() {
 }
 
 // ── Biometric Setup Modal ────────────────────────────────────────────────────
+// Checks platform authenticator availability on mount and skips silently if
+// WebAuthn is not available — staff can always use their code instead.
 function BiometricSetupModal({ staffName, staffEmail, staffCode, role, onDone }) {
-  const [state, setState] = useState('prompt'); // prompt | enrolling | done | error
+  // 'checking' → 'prompt' | 'unavailable' | 'enrolling' | 'done' | 'error'
+  const [state, setState] = useState('checking');
+
+  useEffect(() => {
+    platformAuthAvailable().then((available) => {
+      console.log('[WebAuthn] BiometricSetupModal — platform auth available:', available);
+      if (!available) {
+        // Skip silently — don't show an error, just call onDone immediately
+        onDone();
+      } else {
+        setState('prompt');
+      }
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleEnroll = async () => {
     setState('enrolling');
@@ -164,10 +224,19 @@ function BiometricSetupModal({ staffName, staffEmail, staffCode, role, onDone })
       }));
       setState('done');
     } catch (err) {
-      console.warn('[Biometric] Enrolment failed:', err);
-      setState('error');
+      console.log('[WebAuthn] Enrolment failed:', err.name, err.message);
+      // NotAllowedError = user cancelled; NotSupportedError = hardware missing
+      // Either way, skip silently — no error shown to staff
+      if (err.name === 'NotAllowedError' || err.name === 'NotSupportedError') {
+        onDone();
+      } else {
+        setState('error');
+      }
     }
   };
+
+  // Don't render anything while checking or if skipping
+  if (state === 'checking' || state === 'unavailable') return null;
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center z-50 p-4">
@@ -221,13 +290,13 @@ function BiometricSetupModal({ staffName, staffEmail, staffCode, role, onDone })
             <div className="text-center">
               <div className="text-4xl mb-2">⚠️</div>
               <h2 className="text-lg font-bold text-gray-900">Setup Failed</h2>
-              <p className="text-sm text-gray-500 mt-1">Fingerprint setup was cancelled or isn't supported on this device.</p>
+              <p className="text-sm text-gray-500 mt-1">Fingerprint setup failed. You can still log in with your staff code.</p>
             </div>
             <button
               onClick={onDone}
               className="w-full py-3 bg-gray-100 text-gray-700 font-semibold rounded-xl hover:bg-gray-200 transition-colors"
             >
-              Skip
+              Continue with Code
             </button>
           </>
         )}
@@ -240,13 +309,23 @@ function BiometricSetupModal({ staffName, staffEmail, staffCode, role, onDone })
 function QuickLoginCard() {
   const navigate   = useNavigate();
   const { userProfile, loading } = useAuth();
-  const [tapping, setTapping]   = useState(false);
-  const [error, setError]       = useState('');
+  const [tapping, setTapping]           = useState(false);
+  const [error, setError]               = useState('');
+  const [authAvailable, setAuthAvailable] = useState(null); // null = checking
 
   const stored = (() => {
     try { return JSON.parse(localStorage.getItem(QUICK_LOGIN_KEY)); }
     catch { return null; }
   })();
+
+  // Check platform authenticator availability once on mount
+  useEffect(() => {
+    if (!stored?.credentialId) return;
+    platformAuthAvailable().then((ok) => {
+      console.log('[QuickLogin] Platform authenticator available:', ok);
+      setAuthAvailable(ok);
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Redirect once profile loads after sign-in
   if (!loading && userProfile) {
@@ -260,7 +339,10 @@ function QuickLoginCard() {
     }
   }
 
+  // No stored credential → nothing to show
   if (!stored?.credentialId) return null;
+  // Still checking availability → don't flash anything
+  if (authAvailable === null) return null;
 
   const handleTap = async () => {
     setError('');
@@ -271,8 +353,8 @@ function QuickLoginCard() {
       await signInWithEmailAndPassword(auth, stored.email, stored.code);
       // AuthContext will detect the sign-in and redirect
     } catch (err) {
-      console.warn('[QuickLogin] Biometric failed:', err);
-      setError('Fingerprint not recognised. Use your staff code instead.');
+      console.log('[QuickLogin] Biometric failed:', err.name, err.message);
+      setError('Fingerprint not recognised. Use your staff code below.');
       setTapping(false);
     }
   };
@@ -281,14 +363,20 @@ function QuickLoginCard() {
     <div className="mb-4 bg-indigo-50 border border-indigo-200 rounded-xl p-4 text-center space-y-3">
       <p className="text-xs text-indigo-400 font-medium uppercase tracking-wide">Welcome back</p>
       <p className="text-lg font-bold text-gray-900">{stored.name}</p>
-      <button
-        onClick={handleTap}
-        disabled={tapping}
-        className="flex items-center gap-2 mx-auto px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-60 transition-colors"
-      >
-        <span className="text-xl">👆</span>
-        {tapping ? 'Verifying…' : 'Tap to Login'}
-      </button>
+
+      {authAvailable ? (
+        <button
+          onClick={handleTap}
+          disabled={tapping}
+          className="flex items-center gap-2 mx-auto px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-60 transition-colors"
+        >
+          <span className="text-xl">👆</span>
+          {tapping ? 'Verifying…' : 'Tap to Login'}
+        </button>
+      ) : (
+        <p className="text-xs text-indigo-400">Use your staff code below to sign in.</p>
+      )}
+
       {error && <p className="text-xs text-red-500">{error}</p>}
     </div>
   );
@@ -416,8 +504,7 @@ function StaffLoginForm() {
         catch { return null; }
       })();
 
-      const webAuthnAvailable = typeof window !== 'undefined' &&
-        typeof window.PublicKeyCredential !== 'undefined';
+      const webAuthnAvailable = await platformAuthAvailable();
 
       if (webAuthnAvailable && !existingQuickLogin?.credentialId) {
         // Store payload for use inside the modal
