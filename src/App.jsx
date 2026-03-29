@@ -23,6 +23,7 @@ import Tasks from './pages/manager/Tasks';
 import ManagerStaff from './pages/manager/ManagerStaff';
 import Shifts from './pages/manager/Shifts';
 import CheckIns from './pages/manager/CheckIns';
+import PhotoReview from './pages/manager/PhotoReview';
 
 // Staff pages
 import StaffLayout   from './pages/staff/StaffLayout';
@@ -89,6 +90,7 @@ export default function App() {
             <Route path="staff" element={<ManagerStaff />} />
             <Route path="shifts" element={<Shifts />} />
             <Route path="checkins" element={<CheckIns />} />
+            <Route path="photos" element={<PhotoReview />} />
           </Route>
 
           {/* Staff routes */}
