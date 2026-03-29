@@ -4,7 +4,6 @@ import { collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, doc
 import { db } from '../../firebase/config';
 import { useAuth } from '../../context/AuthContext';
 import toast from 'react-hot-toast';
-import PageHeader from '../../components/common/PageHeader';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import EmptyState from '../../components/common/EmptyState';
 import Modal from '../../components/common/Modal';
@@ -12,14 +11,26 @@ import ConfirmDialog from '../../components/common/ConfirmDialog';
 
 const emptyForm = { name: '', location: '' };
 
+// ── Input style helper ───────────────────────────────────────────────────────
+const inputStyle = {
+  width: '100%',
+  padding: '8px 12px',
+  borderRadius: '8px',
+  border: '1px solid var(--border)',
+  backgroundColor: 'var(--surface)',
+  color: 'var(--text)',
+  fontSize: '14px',
+  outline: 'none',
+};
+
 export default function Branches() {
   const { user } = useAuth();
-  const [branches, setBranches] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editTarget, setEditTarget] = useState(null); // branch to edit
-  const [form, setForm] = useState(emptyForm);
-  const [saving, setSaving] = useState(false);
+  const [branches,     setBranches]     = useState([]);
+  const [loading,      setLoading]      = useState(true);
+  const [modalOpen,    setModalOpen]    = useState(false);
+  const [editTarget,   setEditTarget]   = useState(null);
+  const [form,         setForm]         = useState(emptyForm);
+  const [saving,       setSaving]       = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
 
   useEffect(() => {
@@ -32,12 +43,7 @@ export default function Branches() {
     return unsub;
   }, [user]);
 
-  const openAdd = () => {
-    setEditTarget(null);
-    setForm(emptyForm);
-    setModalOpen(true);
-  };
-
+  const openAdd = () => { setEditTarget(null); setForm(emptyForm); setModalOpen(true); };
   const openEdit = (branch) => {
     setEditTarget(branch);
     setForm({ name: branch.name, location: branch.location });
@@ -85,54 +91,79 @@ export default function Branches() {
   if (loading) return <LoadingSpinner message="Loading branches..." />;
 
   return (
-    <div>
-      <PageHeader
-        title="Branches"
-        subtitle="Manage all your restaurant locations"
-        action={
-          <button
-            onClick={openAdd}
-            className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
-          >
-            + Add Branch
-          </button>
-        }
-      />
+    <div className="space-y-6">
 
+      {/* Page actions row */}
+      <div className="flex items-center justify-between">
+        <p className="text-sm" style={{ color: 'var(--text-sub)' }}>
+          Manage all your restaurant locations
+        </p>
+        <button
+          onClick={openAdd}
+          className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors"
+          style={{ backgroundColor: 'var(--color-primary)' }}
+          onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--color-primary-dark)'}
+          onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--color-primary)'}
+        >
+          + Add Branch
+        </button>
+      </div>
+
+      {/* Content */}
       {branches.length === 0 ? (
         <EmptyState icon="🏢" title="No branches yet" message="Add your first branch to get started." />
       ) : (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div
+          className="rounded-xl overflow-hidden"
+          style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)', boxShadow: 'var(--shadow)' }}
+        >
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="text-left px-5 py-3 font-semibold text-gray-600">Name</th>
-                <th className="text-left px-5 py-3 font-semibold text-gray-600">Location</th>
-                <th className="text-left px-5 py-3 font-semibold text-gray-600">Created</th>
+              <tr style={{ borderBottom: '1px solid var(--border)', backgroundColor: 'var(--surface2)' }}>
+                <th className="text-left px-5 py-3 font-semibold text-xs uppercase tracking-wide" style={{ color: 'var(--text-sub)' }}>Name</th>
+                <th className="text-left px-5 py-3 font-semibold text-xs uppercase tracking-wide" style={{ color: 'var(--text-sub)' }}>Location</th>
+                <th className="text-left px-5 py-3 font-semibold text-xs uppercase tracking-wide" style={{ color: 'var(--text-sub)' }}>Created</th>
                 <th className="px-5 py-3" />
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
-              {branches.map((branch) => (
-                <tr key={branch.id} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-5 py-3.5 font-medium text-gray-900">{branch.name}</td>
-                  <td className="px-5 py-3.5 text-gray-600">{branch.location}</td>
-                  <td className="px-5 py-3.5 text-gray-500">
+            <tbody>
+              {branches.map((branch, idx) => (
+                <tr
+                  key={branch.id}
+                  style={{
+                    borderTop: idx === 0 ? 'none' : '1px solid var(--border)',
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--surface2)'}
+                  onMouseLeave={e => e.currentTarget.style.backgroundColor = ''}
+                >
+                  <td className="px-5 py-3.5 font-medium" style={{ color: 'var(--text)' }}>
+                    {branch.name}
+                  </td>
+                  <td className="px-5 py-3.5" style={{ color: 'var(--text-sub)' }}>
+                    {branch.location}
+                  </td>
+                  <td className="px-5 py-3.5" style={{ color: 'var(--text-faint)' }}>
                     {branch.createdAt?.toDate
                       ? branch.createdAt.toDate().toLocaleDateString()
                       : '—'}
                   </td>
                   <td className="px-5 py-3.5">
-                    <div className="flex items-center gap-2 justify-end">
+                    <div className="flex items-center gap-3 justify-end">
                       <button
                         onClick={() => openEdit(branch)}
-                        className="text-indigo-600 hover:text-indigo-800 font-medium text-xs"
+                        className="text-sm font-medium transition-colors"
+                        style={{ color: 'var(--color-primary)' }}
+                        onMouseEnter={e => e.currentTarget.style.color = 'var(--color-primary-dark)'}
+                        onMouseLeave={e => e.currentTarget.style.color = 'var(--color-primary)'}
                       >
                         Edit
                       </button>
                       <button
                         onClick={() => setDeleteTarget(branch)}
-                        className="text-red-500 hover:text-red-700 font-medium text-xs"
+                        className="text-sm font-medium transition-colors"
+                        style={{ color: '#EF4444' }}
+                        onMouseEnter={e => e.currentTarget.style.color = '#DC2626'}
+                        onMouseLeave={e => e.currentTarget.style.color = '#EF4444'}
                       >
                         Delete
                       </button>
@@ -154,39 +185,51 @@ export default function Branches() {
       >
         <form onSubmit={handleSave} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Branch Name</label>
+            <label className="block text-sm font-medium mb-1.5" style={{ color: 'var(--text-sub)' }}>
+              Branch Name
+            </label>
             <input
               required
               value={form.name}
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              style={inputStyle}
               placeholder="e.g. Downtown Branch"
+              onFocus={e => e.target.style.borderColor = 'var(--color-primary)'}
+              onBlur={e => e.target.style.borderColor = 'var(--border)'}
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
+            <label className="block text-sm font-medium mb-1.5" style={{ color: 'var(--text-sub)' }}>
+              Location
+            </label>
             <input
               required
               value={form.location}
               onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              style={inputStyle}
               placeholder="e.g. 123 Main St, City"
+              onFocus={e => e.target.style.borderColor = 'var(--color-primary)'}
+              onBlur={e => e.target.style.borderColor = 'var(--border)'}
             />
           </div>
           <div className="flex gap-3 justify-end pt-2">
             <button
               type="button"
               onClick={() => setModalOpen(false)}
-              className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200"
+              className="px-4 py-2 text-sm rounded-lg transition-colors"
+              style={{ color: 'var(--text-sub)', backgroundColor: 'var(--surface2)', border: '1px solid var(--border)' }}
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={saving}
-              className="px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-60"
+              className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors disabled:opacity-60"
+              style={{ backgroundColor: 'var(--color-primary)' }}
+              onMouseEnter={e => { if (!saving) e.currentTarget.style.backgroundColor = 'var(--color-primary-dark)'; }}
+              onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--color-primary)'}
             >
-              {saving ? 'Saving...' : 'Save'}
+              {saving ? 'Saving…' : 'Save'}
             </button>
           </div>
         </form>

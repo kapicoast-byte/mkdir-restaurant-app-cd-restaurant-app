@@ -1,13 +1,13 @@
-// Owner dashboard — branch health cards, total staff, task summaries, photo audit
+// Owner dashboard — greeting, stat cards, branch health grid, photo audit
 import { useEffect, useState } from 'react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { Link } from 'react-router-dom';
 import { db } from '../../firebase/config';
 import { useAuth } from '../../context/AuthContext';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import EmptyState from '../../components/common/EmptyState';
-import PageHeader from '../../components/common/PageHeader';
 
-// Compute health score: % of today's tasks that are completed
+// ── Helpers ──────────────────────────────────────────────────────────────────
 function computeHealthScore(tasks) {
   const todayStr = new Date().toDateString();
   const todayTasks = tasks.filter((t) => {
@@ -19,50 +19,122 @@ function computeHealthScore(tasks) {
   return Math.round((completed / todayTasks.length) * 100);
 }
 
-function HealthBadge({ score }) {
-  if (score === null) return <span className="text-xs text-gray-400">No tasks today</span>;
-  const color = score >= 75 ? 'bg-green-100 text-green-700' : score >= 40 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700';
-  return <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${color}`}>{score}% complete</span>;
+function getGreeting() {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 17) return 'Good afternoon';
+  return 'Good evening';
 }
 
-// ── Photo Audit lightbox ──────────────────────────────────────────────────────
+function formatDate() {
+  return new Date().toLocaleDateString('en-US', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+  });
+}
+
+function toDate(val) {
+  if (!val) return null;
+  if (val?.toDate) return val.toDate();
+  return new Date(val);
+}
+
+// ── Stat card ────────────────────────────────────────────────────────────────
+function StatCard({ label, value, sub, accent }) {
+  return (
+    <div
+      className="rounded-xl p-5"
+      style={{
+        backgroundColor: 'var(--surface)',
+        border: '1px solid var(--border)',
+        borderLeft: '4px solid var(--color-primary)',
+        boxShadow: 'var(--shadow)',
+      }}
+    >
+      <div
+        className="text-3xl font-bold"
+        style={{ color: accent ? 'var(--color-primary)' : 'var(--text)' }}
+      >
+        {value}
+      </div>
+      <div className="text-sm mt-1 font-medium" style={{ color: 'var(--text-sub)' }}>
+        {label}
+      </div>
+      {sub !== undefined && (
+        <div className="text-xs mt-0.5" style={{ color: 'var(--text-faint)' }}>
+          {sub}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Health bar ───────────────────────────────────────────────────────────────
+function HealthBar({ score }) {
+  if (score === null) {
+    return <span className="text-xs" style={{ color: 'var(--text-faint)' }}>No tasks today</span>;
+  }
+  const color = score >= 75 ? '#22C55E' : score >= 40 ? '#EAB308' : '#EF4444';
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium" style={{ color: 'var(--text-sub)' }}>Health</span>
+        <span className="text-xs font-bold" style={{ color }}>{score}%</span>
+      </div>
+      <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--surface2)' }}>
+        <div
+          className="h-full rounded-full transition-all"
+          style={{ width: `${score}%`, backgroundColor: color }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ── Photo lightbox ───────────────────────────────────────────────────────────
 function PhotoLightbox({ url, onClose }) {
   return (
-    <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4" onClick={onClose}>
-      <button className="absolute top-4 right-4 text-white text-3xl leading-none" onClick={onClose}>×</button>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ backgroundColor: 'rgba(0,0,0,0.92)' }}
+      onClick={onClose}
+    >
+      <button
+        className="absolute top-4 right-4 text-white text-3xl leading-none"
+        onClick={onClose}
+      >
+        ×
+      </button>
       <img
         src={url}
         alt="Task photo"
-        className="max-w-full max-h-full rounded-lg object-contain"
+        className="max-w-full max-h-full rounded-xl object-contain"
         onClick={(e) => e.stopPropagation()}
       />
     </div>
   );
 }
 
+// ── Dashboard ────────────────────────────────────────────────────────────────
 export default function OwnerDashboard() {
-  const { user } = useAuth();
-  const [branches,      setBranches]      = useState([]);
-  const [allStaff,      setAllStaff]      = useState([]);
-  const [allTasks,      setAllTasks]      = useState([]);
-  const [loading,       setLoading]       = useState(true);
-  const [auditBranch,   setAuditBranch]   = useState('all'); // branch filter for photo audit
-  const [lightboxUrl,   setLightboxUrl]   = useState(null);
+  const { user, userProfile } = useAuth();
+  const [branches,    setBranches]    = useState([]);
+  const [allStaff,    setAllStaff]    = useState([]);
+  const [allTasks,    setAllTasks]    = useState([]);
+  const [loading,     setLoading]     = useState(true);
+  const [auditBranch, setAuditBranch] = useState('all');
+  const [lightboxUrl, setLightboxUrl] = useState(null);
 
   useEffect(() => {
     if (!user) return;
 
-    // Real-time listeners
     const unsubBranches = onSnapshot(
       query(collection(db, 'branches'), where('ownerId', '==', user.uid)),
       (snap) => setBranches(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
     );
-
     const unsubStaff = onSnapshot(
       query(collection(db, 'staff'), where('isActive', '==', true)),
       (snap) => setAllStaff(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
     );
-
     const unsubTasks = onSnapshot(
       collection(db, 'tasks'),
       (snap) => {
@@ -71,119 +143,169 @@ export default function OwnerDashboard() {
       }
     );
 
-    return () => {
-      unsubBranches();
-      unsubStaff();
-      unsubTasks();
-    };
+    return () => { unsubBranches(); unsubStaff(); unsubTasks(); };
   }, [user]);
 
-  const totalActiveStaff = allStaff.length;
-  const now = new Date();
+  if (loading) return <LoadingSpinner message="Loading dashboard..." />;
 
-  // Photo audit: completed tasks that have a photoUrl, filtered by branch
+  const now        = new Date();
+  const todayStr   = now.toDateString();
+  const ownerName  = userProfile?.name?.split(' ')[0] ?? 'Owner';
+
+  // Stat calculations
+  const completedToday = allTasks.filter((t) => {
+    if (t.status !== 'completed') return false;
+    const d = toDate(t.updatedAt);
+    return d && d.toDateString() === todayStr;
+  }).length;
+
+  const overdueTasks = allTasks.filter(
+    (t) => t.status !== 'completed' && t.dueTime && new Date(t.dueTime) < now
+  ).length;
+
+  // Per-branch stats
+  const branchStats = branches.map((branch) => {
+    const branchStaff  = allStaff.filter((s) => s.branchId === branch.id);
+    const branchTasks  = allTasks.filter((t) => t.branchId === branch.id);
+    const activeTasks  = branchTasks.filter((t) => t.status !== 'completed').length;
+    const overdueCount = branchTasks.filter(
+      (t) => t.status !== 'completed' && t.dueTime && new Date(t.dueTime) < now
+    ).length;
+    const health = computeHealthScore(branchTasks);
+    return { branch, staffCount: branchStaff.length, activeTasks, overdueCount, health };
+  });
+
+  // Photo audit
   const photoAuditTasks = allTasks
     .filter((t) => t.status === 'completed' && t.photoUrl)
     .filter((t) => auditBranch === 'all' || t.branchId === auditBranch)
     .sort((a, b) => {
-      // Sort by completion time descending (use updatedAt if available, else createdAt)
-      const ta = a.updatedAt?.toDate ? a.updatedAt.toDate() : (a.updatedAt ? new Date(a.updatedAt) : new Date(0));
-      const tb = b.updatedAt?.toDate ? b.updatedAt.toDate() : (b.updatedAt ? new Date(b.updatedAt) : new Date(0));
+      const ta = toDate(a.updatedAt) ?? new Date(0);
+      const tb = toDate(b.updatedAt) ?? new Date(0);
       return tb - ta;
     });
 
-  const staffName   = (id) => allStaff.find((s) => s.id === id)?.name ?? '—';
-  const branchName  = (id) => branches.find((b) => b.id === id)?.name ?? '—';
-
-  // Build per-branch stats
-  const branchStats = branches.map((branch) => {
-    const branchStaff = allStaff.filter((s) => s.branchId === branch.id);
-    const branchTasks = allTasks.filter((t) => t.branchId === branch.id);
-    const activeTasks = branchTasks.filter((t) => t.status !== 'completed');
-    const overdueTasks = branchTasks.filter(
-      (t) => t.status !== 'completed' && t.dueTime && new Date(t.dueTime) < now
-    );
-    const health = computeHealthScore(branchTasks);
-    return { branch, staffCount: branchStaff.length, activeTasks: activeTasks.length, overdueTasks: overdueTasks.length, health };
-  });
-
-  if (loading) return <LoadingSpinner message="Loading dashboard..." />;
+  const staffName  = (id) => allStaff.find((s) => s.id === id)?.name ?? '—';
+  const branchName = (id) => branches.find((b) => b.id === id)?.name ?? '—';
 
   return (
-    <div>
-      <PageHeader
-        title="Owner Dashboard"
-        subtitle={`Overview of all branches — ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`}
-      />
+    <div className="space-y-8">
 
-      {/* Summary bar */}
-      <div className="grid grid-cols-3 gap-4 mb-8">
-        <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-200">
-          <div className="text-3xl font-bold text-gray-900">{branches.length}</div>
-          <div className="text-sm text-gray-500 mt-1">Total Branches</div>
-        </div>
-        <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-200">
-          <div className="text-3xl font-bold text-indigo-600">{totalActiveStaff}</div>
-          <div className="text-sm text-gray-500 mt-1">Active Staff</div>
-        </div>
-        <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-200">
-          <div className="text-3xl font-bold text-orange-500">
-            {branchStats.reduce((acc, b) => acc + b.overdueTasks, 0)}
-          </div>
-          <div className="text-sm text-gray-500 mt-1">Overdue Tasks</div>
-        </div>
+      {/* ── Greeting ───────────────────────────────────────────────────────── */}
+      <div>
+        <h2 className="text-2xl font-bold" style={{ color: 'var(--text)' }}>
+          {getGreeting()}, {ownerName} 👋
+        </h2>
+        <p className="text-sm mt-1" style={{ color: 'var(--text-sub)' }}>
+          {formatDate()}
+        </p>
       </div>
 
-      {/* Branch cards */}
-      <h2 className="text-lg font-semibold text-gray-800 mb-4">Branches</h2>
-
-      {branches.length === 0 ? (
-        <EmptyState
-          icon="🏢"
-          title="No branches yet"
-          message="Go to Branches to add your first restaurant branch."
+      {/* ── Stat cards ─────────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard label="Total Branches"        value={branches.length}     />
+        <StatCard label="Active Staff"          value={allStaff.length}     />
+        <StatCard label="Tasks Completed Today" value={completedToday}       accent />
+        <StatCard
+          label="Overdue Tasks"
+          value={overdueTasks}
+          accent={overdueTasks > 0}
         />
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {branchStats.map(({ branch, staffCount, activeTasks, overdueTasks, health }) => (
-            <div key={branch.id} className="bg-white rounded-xl p-5 shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
-              <div className="flex items-start justify-between mb-3">
-                <div>
-                  <h3 className="font-semibold text-gray-900">{branch.name}</h3>
-                  <p className="text-xs text-gray-500 mt-0.5">{branch.location}</p>
-                </div>
-                <HealthBadge score={health} />
-              </div>
-              <div className="grid grid-cols-3 gap-2 mt-4">
-                <div className="text-center">
-                  <div className="text-xl font-bold text-gray-800">{staffCount}</div>
-                  <div className="text-xs text-gray-500">Staff</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-xl font-bold text-blue-600">{activeTasks}</div>
-                  <div className="text-xs text-gray-500">Active Tasks</div>
-                </div>
-                <div className="text-center">
-                  <div className={`text-xl font-bold ${overdueTasks > 0 ? 'text-red-600' : 'text-gray-400'}`}>
-                    {overdueTasks}
-                  </div>
-                  <div className="text-xs text-gray-500">Overdue</div>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      </div>
 
-      {/* ── Photo Audit ─────────────────────────────────────────────────── */}
-      <div className="mt-10">
+      {/* ── Branches section ───────────────────────────────────────────────── */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-base font-semibold" style={{ color: 'var(--text)' }}>
+            Branches
+          </h3>
+          <Link
+            to="/owner/branches"
+            className="text-sm font-medium transition-colors"
+            style={{ color: 'var(--color-primary)' }}
+            onMouseEnter={e => e.currentTarget.style.color = 'var(--color-primary-dark)'}
+            onMouseLeave={e => e.currentTarget.style.color = 'var(--color-primary)'}
+          >
+            View All →
+          </Link>
+        </div>
+
+        {branches.length === 0 ? (
+          <EmptyState
+            icon="🏢"
+            title="No branches yet"
+            message="Go to Branches to add your first restaurant branch."
+          />
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {branchStats.map(({ branch, staffCount, activeTasks, overdueCount, health }) => (
+              <div
+                key={branch.id}
+                className="rounded-xl p-5"
+                style={{
+                  backgroundColor: 'var(--surface)',
+                  border: '1px solid var(--border)',
+                  boxShadow: 'var(--shadow)',
+                }}
+              >
+                {/* Branch header */}
+                <div className="mb-4">
+                  <h4 className="font-semibold" style={{ color: 'var(--text)' }}>
+                    {branch.name}
+                  </h4>
+                  {branch.location && (
+                    <p className="text-xs mt-0.5" style={{ color: 'var(--text-faint)' }}>
+                      {branch.location}
+                    </p>
+                  )}
+                </div>
+
+                {/* Health bar */}
+                <div className="mb-4">
+                  <HealthBar score={health} />
+                </div>
+
+                {/* Mini stats */}
+                <div className="grid grid-cols-3 gap-2 pt-3" style={{ borderTop: '1px solid var(--border)' }}>
+                  <div className="text-center">
+                    <div className="text-lg font-bold" style={{ color: 'var(--text)' }}>{staffCount}</div>
+                    <div className="text-xs" style={{ color: 'var(--text-faint)' }}>Staff</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-lg font-bold" style={{ color: '#3B82F6' }}>{activeTasks}</div>
+                    <div className="text-xs" style={{ color: 'var(--text-faint)' }}>Active</div>
+                  </div>
+                  <div className="text-center">
+                    <div
+                      className="text-lg font-bold"
+                      style={{ color: overdueCount > 0 ? '#EF4444' : 'var(--text-faint)' }}
+                    >
+                      {overdueCount}
+                    </div>
+                    <div className="text-xs" style={{ color: 'var(--text-faint)' }}>Overdue</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Photo Audit ────────────────────────────────────────────────────── */}
+      <div>
         <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-          <h2 className="text-lg font-semibold text-gray-800">📷 Photo Audit</h2>
-          {/* Branch filter */}
+          <h3 className="text-base font-semibold" style={{ color: 'var(--text)' }}>
+            Photo Audit
+          </h3>
           <select
             value={auditBranch}
             onChange={(e) => setAuditBranch(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="px-3 py-1.5 text-sm rounded-lg"
+            style={{
+              backgroundColor: 'var(--surface)',
+              border: '1px solid var(--border)',
+              color: 'var(--text)',
+            }}
           >
             <option value="all">All Branches</option>
             {branches.map((b) => (
@@ -197,27 +319,35 @@ export default function OwnerDashboard() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
             {photoAuditTasks.map((task) => {
-              const completedAt = task.updatedAt?.toDate
-                ? task.updatedAt.toDate()
-                : task.updatedAt
-                  ? new Date(task.updatedAt)
-                  : null;
+              const completedAt = toDate(task.updatedAt);
               return (
-                <div key={task.id} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                  {/* Photo thumbnail */}
+                <div
+                  key={task.id}
+                  className="rounded-xl overflow-hidden"
+                  style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)', boxShadow: 'var(--shadow)' }}
+                >
                   <button
                     onClick={() => setLightboxUrl(task.photoUrl)}
-                    className="w-full h-40 overflow-hidden bg-gray-100 block hover:opacity-90 transition-opacity"
+                    className="w-full h-40 overflow-hidden block"
+                    style={{ backgroundColor: 'var(--surface2)' }}
                   >
-                    <img src={task.photoUrl} alt="Task proof" className="w-full h-full object-cover" />
+                    <img
+                      src={task.photoUrl}
+                      alt="Task proof"
+                      className="w-full h-full object-cover opacity-90 hover:opacity-100 transition-opacity"
+                    />
                   </button>
                   <div className="p-4">
-                    <h3 className="font-semibold text-gray-900 truncate">{task.title}</h3>
-                    <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5 text-xs text-gray-500">
+                    <h4 className="font-semibold text-sm truncate" style={{ color: 'var(--text)' }}>
+                      {task.title}
+                    </h4>
+                    <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5 text-xs" style={{ color: 'var(--text-sub)' }}>
                       <span>👤 {staffName(task.assignedTo)}</span>
                       <span>🏢 {branchName(task.branchId)}</span>
                       {completedAt && (
-                        <span>🕐 {completedAt.toLocaleString('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                        <span>
+                          {completedAt.toLocaleString('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        </span>
                       )}
                     </div>
                   </div>
@@ -228,7 +358,6 @@ export default function OwnerDashboard() {
         )}
       </div>
 
-      {/* Lightbox */}
       {lightboxUrl && <PhotoLightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />}
     </div>
   );

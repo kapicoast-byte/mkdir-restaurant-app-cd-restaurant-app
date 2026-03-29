@@ -22,7 +22,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   collection, onSnapshot, addDoc, updateDoc, setDoc,
-  doc, serverTimestamp, query, orderBy, getDoc
+  doc, serverTimestamp, query, orderBy,
 } from 'firebase/firestore';
 import {
   createUserWithEmailAndPassword,
@@ -34,15 +34,14 @@ import {
 import { QRCodeCanvas, QRCodeSVG } from 'qrcode.react';
 import { db, secondaryAuth } from '../../firebase/config';
 import toast from 'react-hot-toast';
-import PageHeader from '../../components/common/PageHeader';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import EmptyState from '../../components/common/EmptyState';
 import Modal from '../../components/common/Modal';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
 
 const ROLES = ['manager', 'trustedManager', 'staff'];
+const FILTER_PILLS = ['All', 'manager', 'trustedManager', 'staff'];
 
-// Derives stable Firebase Auth email from STF-XXXX code
 function staffAuthEmail(staffCode) {
   return `${staffCode.toLowerCase()}@staff.restaurant.app`;
 }
@@ -54,30 +53,88 @@ function generateStaffCode() {
   return code;
 }
 
+// ── Role styling ─────────────────────────────────────────────────────────────
+const ROLE_BADGE = {
+  owner:          { bg: '#FFF7ED', color: '#EA580C', label: 'Owner' },
+  trustedManager: { bg: '#F5F3FF', color: '#7C3AED', label: 'Trusted Mgr' },
+  manager:        { bg: '#EFF6FF', color: '#2563EB', label: 'Manager' },
+  staff:          { bg: '#F9FAFB', color: '#6B7280', label: 'Staff' },
+  kitchen:        { bg: '#F0FDF4', color: '#16A34A', label: 'Kitchen' },
+  floor:          { bg: '#FFFBEB', color: '#D97706', label: 'Floor' },
+  cleaning:       { bg: '#F8FAFC', color: '#64748B', label: 'Cleaning' },
+};
+
+const AVATAR_BG = {
+  owner:          '#F97316',
+  trustedManager: '#8B5CF6',
+  manager:        '#3B82F6',
+  staff:          '#6B7280',
+  kitchen:        '#22C55E',
+  floor:          '#F59E0B',
+  cleaning:       '#94A3B8',
+};
+
+function RoleBadge({ role }) {
+  const style = ROLE_BADGE[role] ?? ROLE_BADGE.staff;
+  return (
+    <span
+      className="text-xs font-semibold px-2 py-0.5 rounded-full"
+      style={{ backgroundColor: style.bg, color: style.color }}
+    >
+      {style.label}
+    </span>
+  );
+}
+
+function Avatar({ name, role, size = 36 }) {
+  const initials = name
+    ? name.trim().split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase()
+    : '?';
+  const bg = AVATAR_BG[role] ?? AVATAR_BG.staff;
+  return (
+    <div
+      className="flex items-center justify-center rounded-full text-white font-bold flex-shrink-0 select-none"
+      style={{ width: size, height: size, fontSize: size * 0.35, backgroundColor: bg }}
+    >
+      {initials}
+    </div>
+  );
+}
+
+// ── Input style ──────────────────────────────────────────────────────────────
+const inputStyle = {
+  width: '100%',
+  padding: '8px 12px',
+  borderRadius: '8px',
+  border: '1px solid var(--border)',
+  backgroundColor: 'var(--surface)',
+  color: 'var(--text)',
+  fontSize: '14px',
+  outline: 'none',
+};
+
 const emptyForm = { name: '', role: 'staff', branchId: '' };
 
 export default function OwnerStaff() {
-  const [staff, setStaff]               = useState([]);
-  const [branches, setBranches]         = useState([]);
-  const [loading, setLoading]           = useState(true);
-  const [modalOpen, setModalOpen]       = useState(false);
-  const [editTarget, setEditTarget]     = useState(null);
-  const [form, setForm]                 = useState(emptyForm);
-  const [saving, setSaving]             = useState(false);
-  const [deactivateTarget, setDeactivateTarget] = useState(null);
-  const [codeViewTarget, setCodeViewTarget]     = useState(null);
-  const [resettingId, setResettingId]   = useState(null);
-  const [copied, setCopied]             = useState(false);
-  const [qrTarget, setQrTarget]         = useState(null);
-  const qrCanvasRef                     = useRef(null);
+  const [staff,             setStaff]             = useState([]);
+  const [branches,          setBranches]          = useState([]);
+  const [loading,           setLoading]           = useState(true);
+  const [modalOpen,         setModalOpen]         = useState(false);
+  const [editTarget,        setEditTarget]        = useState(null);
+  const [form,              setForm]              = useState(emptyForm);
+  const [saving,            setSaving]            = useState(false);
+  const [deactivateTarget,  setDeactivateTarget]  = useState(null);
+  const [codeViewTarget,    setCodeViewTarget]    = useState(null);
+  const [resettingId,       setResettingId]       = useState(null);
+  const [copied,            setCopied]            = useState(false);
+  const [qrTarget,          setQrTarget]          = useState(null);
+  const [filterRole,        setFilterRole]        = useState('All');
+  const [search,            setSearch]            = useState('');
 
   useEffect(() => {
     const unsubStaff = onSnapshot(
       query(collection(db, 'staff'), orderBy('name')),
-      (snap) => {
-        setStaff(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setLoading(false);
-      }
+      (snap) => { setStaff(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); setLoading(false); }
     );
     const unsubBranches = onSnapshot(collection(db, 'branches'), (snap) =>
       setBranches(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
@@ -88,72 +145,48 @@ export default function OwnerStaff() {
   const branchName = (id) => branches.find((b) => b.id === id)?.name ?? '—';
 
   const openAdd  = () => { setEditTarget(null); setForm(emptyForm); setModalOpen(true); };
-  const openEdit = (s) => {
-    setEditTarget(s);
-    setForm({ name: s.name, role: s.role, branchId: s.branchId });
-    setModalOpen(true);
-  };
+  const openEdit = (s) => { setEditTarget(s); setForm({ name: s.name, role: s.role, branchId: s.branchId }); setModalOpen(true); };
 
-  // ── Create / Edit ────────────────────────────────────────────────────────────
+  // ── Create / Edit ─────────────────────────────────────────────────────────
   const handleSave = async (e) => {
     e.preventDefault();
     setSaving(true);
     try {
       if (editTarget) {
         await updateDoc(doc(db, 'staff', editTarget.id), {
-          name: form.name.trim(),
-          role: form.role,
-          branchId: form.branchId,
+          name: form.name.trim(), role: form.role, branchId: form.branchId,
         });
         toast.success('Staff updated');
         setModalOpen(false);
         return;
       }
 
-      // ── New staff member ──────────────────────────────────────────────────
       const code  = generateStaffCode();
       const email = staffAuthEmail(code);
 
-      // 1. Save to Firestore first to get a stable doc ID
       const staffRef = await addDoc(collection(db, 'staff'), {
-        name:               form.name.trim(),
-        role:               form.role,
-        branchId:           form.branchId,
-        staffCode:          code,
-        isActive:           true,
-        permissionOverrides: {},
-        authUid:            null,
-        createdAt:          serverTimestamp(),
+        name: form.name.trim(), role: form.role, branchId: form.branchId,
+        staffCode: code, isActive: true, permissionOverrides: {},
+        authUid: null, createdAt: serverTimestamp(),
       });
 
-      // 2. Create Firebase Auth account using secondary app
       let uid;
       try {
         const cred = await createUserWithEmailAndPassword(secondaryAuth, email, code);
         uid = cred.user.uid;
       } finally {
-        // Always sign out secondary — never leave it signed in
         await signOut(secondaryAuth).catch(() => {});
       }
 
-      // 3. Link authUid back to the staff doc
       await updateDoc(doc(db, 'staff', staffRef.id), { authUid: uid });
-
-      // 4. Create /users/{uid} so AuthContext can load the profile on login
       await setDoc(doc(db, 'users', uid), {
-        name:      form.name.trim(),
-        email,
-        role:      form.role,
-        branchId:  form.branchId,
-        staffId:   staffRef.id,
-        createdAt: serverTimestamp(),
+        name: form.name.trim(), email, role: form.role,
+        branchId: form.branchId, staffId: staffRef.id, createdAt: serverTimestamp(),
       });
 
-      // 5. Show the code to the owner
       setModalOpen(false);
       setCodeViewTarget({ id: staffRef.id, name: form.name.trim(), staffCode: code });
       toast.success('Staff member created');
-
     } catch (err) {
       console.error('[OwnerStaff] create error:', err);
       toast.error(
@@ -166,9 +199,7 @@ export default function OwnerStaff() {
     }
   };
 
-  // ── Reset Code ────────────────────────────────────────────────────────────────
-  // Strategy: always try to create fresh first, fall back to update, fall back to
-  // collision-safe create. This handles every possible Auth account state.
+  // ── Reset Code ────────────────────────────────────────────────────────────
   const handleResetCode = async (s) => {
     setResettingId(s.id);
     try {
@@ -176,14 +207,10 @@ export default function OwnerStaff() {
       const newEmail = staffAuthEmail(newCode);
       let   uid      = null;
 
-      // ── STEP A: Try creating a brand-new Auth account ──────────────────────
-      // Succeeds when no Auth account exists for this email (most common for
-      // legacy staff like "jayanth" whose authUid was never set properly).
       let stepAFailed = false;
       try {
         const cred = await createUserWithEmailAndPassword(secondaryAuth, newEmail, newCode);
         uid = cred.user.uid;
-        console.log('[ResetCode] Step A success — new account created, uid:', uid);
       } catch (createErr) {
         stepAFailed = true;
         console.log('[ResetCode] Step A failed:', createErr.code);
@@ -191,7 +218,6 @@ export default function OwnerStaff() {
         await signOut(secondaryAuth).catch(() => {});
       }
 
-      // ── STEP B: Account already exists — try sign-in then update ──────────
       if (stepAFailed) {
         const oldEmail = staffAuthEmail(s.staffCode);
         let stepBFailed = false;
@@ -200,7 +226,6 @@ export default function OwnerStaff() {
           uid = cred.user.uid;
           await updateEmail(cred.user, newEmail);
           await updatePassword(cred.user, newCode);
-          console.log('[ResetCode] Step B success — account updated, uid:', uid);
         } catch (signInErr) {
           stepBFailed = true;
           console.log('[ResetCode] Step B failed:', signInErr.code);
@@ -208,13 +233,11 @@ export default function OwnerStaff() {
           await signOut(secondaryAuth).catch(() => {});
         }
 
-        // ── STEP B2: Sign-in failed — create with collision-safe email ───────
         if (stepBFailed) {
           const safeEmail = `${newCode.toLowerCase()}-${Date.now()}@staff.restaurant.app`;
           try {
             const cred = await createUserWithEmailAndPassword(secondaryAuth, safeEmail, newCode);
             uid = cred.user.uid;
-            console.log('[ResetCode] Step B2 — collision-safe account created, uid:', uid);
           } finally {
             await signOut(secondaryAuth).catch(() => {});
           }
@@ -223,23 +246,14 @@ export default function OwnerStaff() {
 
       if (!uid) throw new Error('Could not obtain a valid Auth uid after all steps');
 
-      // ── STEP C: Update Firestore ───────────────────────────────────────────
       await updateDoc(doc(db, 'staff', s.id), { staffCode: newCode, authUid: uid });
-
-      // Upsert /users/{uid} (handles both new uid and existing uid)
       await setDoc(doc(db, 'users', uid), {
-        name:      s.name,
-        email:     newEmail,
-        role:      s.role,
-        branchId:  s.branchId,
-        staffId:   s.id,
-        createdAt: serverTimestamp(),
+        name: s.name, email: newEmail, role: s.role,
+        branchId: s.branchId, staffId: s.id, createdAt: serverTimestamp(),
       }, { merge: true });
 
-      // Show new code to owner
       setCodeViewTarget({ ...s, staffCode: newCode, authUid: uid });
       toast.success('Code reset successfully');
-
     } catch (err) {
       console.error('[OwnerStaff] reset code error:', err);
       toast.error(`Failed to reset code: ${err.message}`);
@@ -248,7 +262,7 @@ export default function OwnerStaff() {
     }
   };
 
-  // ── Deactivate / Reactivate ───────────────────────────────────────────────────
+  // ── Deactivate / Reactivate ───────────────────────────────────────────────
   const handleDeactivate = async () => {
     try {
       await updateDoc(doc(db, 'staff', deactivateTarget.id), { isActive: false });
@@ -269,7 +283,6 @@ export default function OwnerStaff() {
     }
   };
 
-  // ── Copy code to clipboard ────────────────────────────────────────────────────
   const copyCode = (code) => {
     navigator.clipboard.writeText(code).then(() => {
       setCopied(true);
@@ -279,89 +292,200 @@ export default function OwnerStaff() {
 
   if (loading) return <LoadingSpinner message="Loading staff..." />;
 
-  return (
-    <div>
-      <PageHeader
-        title="Staff"
-        subtitle="All staff members across all branches"
-        action={
-          <button
-            onClick={openAdd}
-            className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
-          >
-            + Add Staff
-          </button>
-        }
-      />
+  // ── Filter + search ───────────────────────────────────────────────────────
+  const filtered = staff.filter((s) => {
+    if (filterRole !== 'All' && s.role !== filterRole) return false;
+    if (search && !s.name.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
 
-      {staff.length === 0 ? (
-        <EmptyState icon="👥" title="No staff yet" message="Add your first staff member to get started." />
+  const pillLabel = (r) => {
+    if (r === 'All') return 'All';
+    return ROLE_BADGE[r]?.label ?? r;
+  };
+
+  return (
+    <div className="space-y-5">
+
+      {/* Toolbar */}
+      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+        {/* Search */}
+        <div className="relative w-full sm:w-64">
+          <span
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-sm pointer-events-none"
+            style={{ color: 'var(--text-faint)' }}
+          >
+            🔍
+          </span>
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by name…"
+            style={{ ...inputStyle, paddingLeft: '32px' }}
+            onFocus={e => e.target.style.borderColor = 'var(--color-primary)'}
+            onBlur={e => e.target.style.borderColor = 'var(--border)'}
+          />
+        </div>
+
+        <button
+          onClick={openAdd}
+          className="flex-shrink-0 px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors whitespace-nowrap"
+          style={{ backgroundColor: 'var(--color-primary)' }}
+          onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--color-primary-dark)'}
+          onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--color-primary)'}
+        >
+          + Add Staff
+        </button>
+      </div>
+
+      {/* Filter pills */}
+      <div className="flex flex-wrap gap-2">
+        {FILTER_PILLS.map((pill) => {
+          const active = filterRole === pill;
+          return (
+            <button
+              key={pill}
+              onClick={() => setFilterRole(pill)}
+              className="px-3 py-1 rounded-full text-sm font-medium transition-colors"
+              style={
+                active
+                  ? { backgroundColor: 'var(--color-primary)', color: '#FFFFFF' }
+                  : { backgroundColor: 'var(--surface2)', color: 'var(--text-sub)', border: '1px solid var(--border)' }
+              }
+            >
+              {pillLabel(pill)}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Staff list */}
+      {filtered.length === 0 ? (
+        <EmptyState
+          icon="👥"
+          title={staff.length === 0 ? 'No staff yet' : 'No results'}
+          message={staff.length === 0 ? 'Add your first staff member to get started.' : 'Try adjusting your search or filters.'}
+        />
       ) : (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div
+          className="rounded-xl overflow-hidden"
+          style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)', boxShadow: 'var(--shadow)' }}
+        >
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="text-left px-5 py-3 font-semibold text-gray-600">Name</th>
-                <th className="text-left px-5 py-3 font-semibold text-gray-600">Role</th>
-                <th className="text-left px-5 py-3 font-semibold text-gray-600">Branch</th>
-                <th className="text-left px-5 py-3 font-semibold text-gray-600">Staff Code</th>
-                <th className="text-left px-5 py-3 font-semibold text-gray-600">Status</th>
+              <tr style={{ borderBottom: '1px solid var(--border)', backgroundColor: 'var(--surface2)' }}>
+                <th className="text-left px-5 py-3 font-semibold text-xs uppercase tracking-wide" style={{ color: 'var(--text-sub)' }}>Name</th>
+                <th className="text-left px-5 py-3 font-semibold text-xs uppercase tracking-wide" style={{ color: 'var(--text-sub)' }}>Role</th>
+                <th className="text-left px-5 py-3 font-semibold text-xs uppercase tracking-wide hidden md:table-cell" style={{ color: 'var(--text-sub)' }}>Branch</th>
+                <th className="text-left px-5 py-3 font-semibold text-xs uppercase tracking-wide hidden lg:table-cell" style={{ color: 'var(--text-sub)' }}>Code</th>
+                <th className="text-left px-5 py-3 font-semibold text-xs uppercase tracking-wide" style={{ color: 'var(--text-sub)' }}>Status</th>
                 <th className="px-5 py-3" />
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
-              {staff.map((s) => (
-                <tr key={s.id} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-5 py-3.5 font-medium text-gray-900">{s.name}</td>
-                  <td className="px-5 py-3.5 text-gray-600 capitalize">{s.role}</td>
-                  <td className="px-5 py-3.5 text-gray-600">{branchName(s.branchId)}</td>
+            <tbody>
+              {filtered.map((s, idx) => (
+                <tr
+                  key={s.id}
+                  style={{ borderTop: idx === 0 ? 'none' : '1px solid var(--border)' }}
+                  onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--surface2)'}
+                  onMouseLeave={e => e.currentTarget.style.backgroundColor = ''}
+                >
+                  {/* Name + avatar */}
                   <td className="px-5 py-3.5">
+                    <div className="flex items-center gap-3">
+                      <Avatar name={s.name} role={s.role} />
+                      <span className="font-medium" style={{ color: 'var(--text)' }}>
+                        {s.name}
+                      </span>
+                    </div>
+                  </td>
+
+                  {/* Role badge */}
+                  <td className="px-5 py-3.5">
+                    <RoleBadge role={s.role} />
+                  </td>
+
+                  {/* Branch */}
+                  <td className="px-5 py-3.5 hidden md:table-cell" style={{ color: 'var(--text-sub)' }}>
+                    {branchName(s.branchId)}
+                  </td>
+
+                  {/* Staff code */}
+                  <td className="px-5 py-3.5 hidden lg:table-cell">
                     <button
                       onClick={() => setCodeViewTarget(s)}
-                      className="font-mono text-xs bg-gray-100 px-2 py-0.5 rounded hover:bg-gray-200 transition-colors"
+                      className="font-mono text-xs px-2 py-0.5 rounded transition-colors"
+                      style={{ backgroundColor: 'var(--surface2)', color: 'var(--text-sub)', border: '1px solid var(--border)' }}
+                      onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--border)'}
+                      onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--surface2)'}
                     >
                       {s.staffCode ?? '—'}
                     </button>
                   </td>
+
+                  {/* Status */}
                   <td className="px-5 py-3.5">
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                      s.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
-                    }`}>
+                    <span
+                      className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                      style={
+                        s.isActive
+                          ? { backgroundColor: '#F0FDF4', color: '#16A34A' }
+                          : { backgroundColor: 'var(--surface2)', color: 'var(--text-faint)' }
+                      }
+                    >
                       {s.isActive ? 'Active' : 'Inactive'}
                     </span>
                   </td>
+
+                  {/* Actions */}
                   <td className="px-5 py-3.5">
-                    <div className="flex items-center gap-2 justify-end">
+                    <div className="flex items-center gap-3 justify-end flex-wrap">
                       <button
                         onClick={() => openEdit(s)}
-                        className="text-indigo-600 hover:text-indigo-800 font-medium text-xs"
+                        className="text-xs font-medium transition-colors"
+                        style={{ color: 'var(--color-primary)' }}
+                        onMouseEnter={e => e.currentTarget.style.color = 'var(--color-primary-dark)'}
+                        onMouseLeave={e => e.currentTarget.style.color = 'var(--color-primary)'}
                       >
                         Edit
                       </button>
                       <button
                         onClick={() => setQrTarget(s)}
-                        className="text-purple-600 hover:text-purple-800 font-medium text-xs"
+                        className="text-xs font-medium transition-colors"
+                        style={{ color: '#8B5CF6' }}
+                        onMouseEnter={e => e.currentTarget.style.color = '#7C3AED'}
+                        onMouseLeave={e => e.currentTarget.style.color = '#8B5CF6'}
                       >
-                        QR Code
+                        QR
                       </button>
                       <button
                         onClick={() => handleResetCode(s)}
                         disabled={resettingId === s.id}
-                        className="text-amber-600 hover:text-amber-800 font-medium text-xs disabled:opacity-50"
+                        className="text-xs font-medium transition-colors disabled:opacity-50"
+                        style={{ color: '#D97706' }}
+                        onMouseEnter={e => { if (resettingId !== s.id) e.currentTarget.style.color = '#B45309'; }}
+                        onMouseLeave={e => e.currentTarget.style.color = '#D97706'}
                       >
-                        {resettingId === s.id ? 'Resetting…' : 'Reset Code'}
+                        {resettingId === s.id ? 'Resetting…' : 'Reset'}
                       </button>
                       {s.isActive ? (
                         <button
                           onClick={() => setDeactivateTarget(s)}
-                          className="text-red-500 hover:text-red-700 font-medium text-xs"
+                          className="text-xs font-medium transition-colors"
+                          style={{ color: '#EF4444' }}
+                          onMouseEnter={e => e.currentTarget.style.color = '#DC2626'}
+                          onMouseLeave={e => e.currentTarget.style.color = '#EF4444'}
                         >
                           Deactivate
                         </button>
                       ) : (
                         <button
                           onClick={() => handleReactivate(s)}
-                          className="text-green-600 hover:text-green-800 font-medium text-xs"
+                          className="text-xs font-medium transition-colors"
+                          style={{ color: '#16A34A' }}
+                          onMouseEnter={e => e.currentTarget.style.color = '#15803D'}
+                          onMouseLeave={e => e.currentTarget.style.color = '#16A34A'}
                         >
                           Reactivate
                         </button>
@@ -384,39 +508,45 @@ export default function OwnerStaff() {
       >
         <form onSubmit={handleSave} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+            <label className="block text-sm font-medium mb-1.5" style={{ color: 'var(--text-sub)' }}>Full Name</label>
             <input
               required
               value={form.name}
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              style={inputStyle}
               placeholder="e.g. Jane Smith"
+              onFocus={e => e.target.style.borderColor = 'var(--color-primary)'}
+              onBlur={e => e.target.style.borderColor = 'var(--border)'}
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
+            <label className="block text-sm font-medium mb-1.5" style={{ color: 'var(--text-sub)' }}>Role</label>
             <select
               value={form.role}
               onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              style={inputStyle}
+              onFocus={e => e.target.style.borderColor = 'var(--color-primary)'}
+              onBlur={e => e.target.style.borderColor = 'var(--border)'}
             >
-              {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+              {ROLES.map((r) => <option key={r} value={r}>{ROLE_BADGE[r]?.label ?? r}</option>)}
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Branch</label>
+            <label className="block text-sm font-medium mb-1.5" style={{ color: 'var(--text-sub)' }}>Branch</label>
             <select
               required
               value={form.branchId}
               onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              style={inputStyle}
+              onFocus={e => e.target.style.borderColor = 'var(--color-primary)'}
+              onBlur={e => e.target.style.borderColor = 'var(--border)'}
             >
               <option value="">Select branch</option>
               {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
           </div>
           {!editTarget && (
-            <p className="text-xs text-gray-400 bg-gray-50 rounded-lg px-3 py-2">
+            <p className="text-xs px-3 py-2 rounded-lg" style={{ color: 'var(--text-faint)', backgroundColor: 'var(--surface2)' }}>
               A Firebase Auth account and STF-XXXX login code will be generated automatically.
             </p>
           )}
@@ -424,14 +554,18 @@ export default function OwnerStaff() {
             <button
               type="button"
               onClick={() => setModalOpen(false)}
-              className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200"
+              className="px-4 py-2 text-sm rounded-lg transition-colors"
+              style={{ color: 'var(--text-sub)', backgroundColor: 'var(--surface2)', border: '1px solid var(--border)' }}
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={saving}
-              className="px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-60"
+              className="px-4 py-2 text-sm font-medium text-white rounded-lg disabled:opacity-60"
+              style={{ backgroundColor: 'var(--color-primary)' }}
+              onMouseEnter={e => { if (!saving) e.currentTarget.style.backgroundColor = 'var(--color-primary-dark)'; }}
+              onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--color-primary)'}
             >
               {saving ? 'Creating…' : 'Save'}
             </button>
@@ -439,7 +573,7 @@ export default function OwnerStaff() {
         </form>
       </Modal>
 
-      {/* Staff Code Modal — shown after create and after reset */}
+      {/* Staff Code Modal */}
       <Modal
         isOpen={!!codeViewTarget}
         onClose={() => { setCodeViewTarget(null); setCopied(false); }}
@@ -448,29 +582,32 @@ export default function OwnerStaff() {
       >
         {codeViewTarget && (
           <div className="space-y-4">
-            <div className="bg-gray-50 rounded-lg p-4 text-center">
-              <p className="text-xs text-gray-500 mb-1">Code for {codeViewTarget.name}</p>
-              <p className="text-3xl font-mono font-bold text-gray-900 tracking-widest">
+            <div className="rounded-xl p-5 text-center" style={{ backgroundColor: 'var(--surface2)' }}>
+              <p className="text-xs mb-1" style={{ color: 'var(--text-sub)' }}>Code for {codeViewTarget.name}</p>
+              <p className="text-3xl font-mono font-bold tracking-widest" style={{ color: 'var(--text)' }}>
                 {codeViewTarget.staffCode}
               </p>
             </div>
-            <p className="text-xs text-gray-400 text-center">
-              Staff enter this code on the Staff Login tab. The code is also their password.
-              Codes never expire — only reset or deactivation stops access.
+            <p className="text-xs text-center" style={{ color: 'var(--text-faint)' }}>
+              Staff enter this code on the Staff Login tab. Codes never expire — only reset or deactivation stops access.
             </p>
             <div className="flex gap-2">
               <button
                 onClick={() => copyCode(codeViewTarget.staffCode)}
-                className="flex-1 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
+                className="flex-1 py-2 text-sm font-medium text-white rounded-lg transition-colors"
+                style={{ backgroundColor: 'var(--color-primary)' }}
+                onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--color-primary-dark)'}
+                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--color-primary)'}
               >
                 {copied ? 'Copied!' : 'Copy Code'}
               </button>
               <button
                 onClick={() => handleResetCode(codeViewTarget)}
                 disabled={resettingId === codeViewTarget.id}
-                className="flex-1 py-2 text-sm font-medium text-indigo-600 border border-indigo-300 rounded-lg hover:bg-indigo-50 transition-colors disabled:opacity-50"
+                className="flex-1 py-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+                style={{ color: 'var(--color-primary)', border: '1px solid var(--color-primary)', backgroundColor: 'transparent' }}
               >
-                {resettingId === codeViewTarget.id ? 'Generating…' : 'Generate New Code'}
+                {resettingId === codeViewTarget.id ? 'Generating…' : 'New Code'}
               </button>
             </div>
           </div>
@@ -525,43 +662,50 @@ export default function OwnerStaff() {
 
           return (
             <div className="space-y-4">
-              <div className="flex flex-col items-center gap-3 bg-gray-50 rounded-xl p-6">
-                <p className="text-sm font-semibold text-gray-700">{qrTarget.name}</p>
-                {/* Visible SVG QR */}
+              <div
+                className="flex flex-col items-center gap-3 rounded-xl p-6"
+                style={{ backgroundColor: 'var(--surface2)' }}
+              >
+                <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>{qrTarget.name}</p>
                 <QRCodeSVG
                   value={loginUrl}
                   size={200}
                   bgColor="#ffffff"
-                  fgColor="#1e1b4b"
+                  fgColor="#111111"
                   level="M"
                   includeMargin
                 />
-                {/* Hidden canvas for download/print */}
                 <QRCodeCanvas
                   id="qr-download-canvas"
                   value={loginUrl}
                   size={400}
                   bgColor="#ffffff"
-                  fgColor="#1e1b4b"
+                  fgColor="#111111"
                   level="M"
                   includeMargin
                   style={{ display: 'none' }}
                 />
-                <p className="font-mono text-lg font-bold tracking-widest text-gray-800">
+                <p className="font-mono text-lg font-bold tracking-widest" style={{ color: 'var(--text)' }}>
                   {qrTarget.staffCode}
                 </p>
-                <p className="text-xs text-gray-400 text-center">Scan with camera to open login page</p>
+                <p className="text-xs text-center" style={{ color: 'var(--text-faint)' }}>
+                  Scan with camera to open login page
+                </p>
               </div>
               <div className="flex gap-2">
                 <button
                   onClick={handleDownload}
-                  className="flex-1 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
+                  className="flex-1 py-2 text-sm font-medium text-white rounded-lg transition-colors"
+                  style={{ backgroundColor: 'var(--color-primary)' }}
+                  onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--color-primary-dark)'}
+                  onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--color-primary)'}
                 >
                   Download PNG
                 </button>
                 <button
                   onClick={handlePrint}
-                  className="flex-1 py-2 text-sm font-medium text-indigo-600 border border-indigo-300 rounded-lg hover:bg-indigo-50 transition-colors"
+                  className="flex-1 py-2 text-sm font-medium rounded-lg transition-colors"
+                  style={{ color: 'var(--color-primary)', border: '1px solid var(--color-primary)', backgroundColor: 'transparent' }}
                 >
                   Print
                 </button>
