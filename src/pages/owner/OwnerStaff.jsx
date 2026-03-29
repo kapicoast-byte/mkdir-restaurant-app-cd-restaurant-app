@@ -39,8 +39,8 @@ import EmptyState from '../../components/common/EmptyState';
 import Modal from '../../components/common/Modal';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
 
-const ROLES = ['manager', 'trustedManager', 'staff'];
-const FILTER_PILLS = ['All', 'manager', 'trustedManager', 'staff'];
+const ROLES = ['manager', 'trustedManager', 'staff', 'driver'];
+const FILTER_PILLS = ['All', 'manager', 'trustedManager', 'staff', 'driver'];
 
 function staffAuthEmail(staffCode) {
   return `${staffCode.toLowerCase()}@staff.restaurant.app`;
@@ -62,6 +62,7 @@ const ROLE_BADGE = {
   kitchen:        { bg: '#F0FDF4', color: '#16A34A', label: 'Kitchen' },
   floor:          { bg: '#FFFBEB', color: '#D97706', label: 'Floor' },
   cleaning:       { bg: '#F8FAFC', color: '#64748B', label: 'Cleaning' },
+  driver:         { bg: '#ECFEFF', color: '#0891B2', label: 'Driver' },
 };
 
 const AVATAR_BG = {
@@ -72,6 +73,7 @@ const AVATAR_BG = {
   kitchen:        '#22C55E',
   floor:          '#F59E0B',
   cleaning:       '#94A3B8',
+  driver:         '#06B6D4',
 };
 
 function RoleBadge({ role }) {

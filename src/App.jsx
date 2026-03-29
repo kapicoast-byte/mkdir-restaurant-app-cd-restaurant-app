@@ -24,6 +24,7 @@ import ManagerStaff from './pages/manager/ManagerStaff';
 import Shifts from './pages/manager/Shifts';
 import CheckIns from './pages/manager/CheckIns';
 import PhotoReview from './pages/manager/PhotoReview';
+import Trips from './pages/manager/Trips';
 
 // Staff pages
 import StaffLayout   from './pages/staff/StaffLayout';
@@ -32,11 +33,16 @@ import StaffCheckIn  from './pages/staff/StaffCheckIn';
 import StaffShifts   from './pages/staff/StaffShifts';
 import StaffSettings from './pages/staff/StaffSettings';
 
+// Driver pages
+import DriverLayout    from './pages/driver/DriverLayout';
+import DriverDashboard from './pages/driver/DriverDashboard';
+
 const OWNER_ROLES   = ['owner'];
 // owners can browse manager views; trustedManager = elevated staff manager
 const MANAGER_ROLES = ['owner', 'manager', 'trustedManager'];
 // all non-manager staff role variants must be listed here
 const STAFF_ROLES   = ['staff', 'kitchen', 'floor', 'cleaning'];
+const DRIVER_ROLES  = ['driver'];
 
 export default function App() {
   return (
@@ -68,11 +74,12 @@ export default function App() {
             }
           >
             <Route index element={<Navigate to="dashboard" replace />} />
-            <Route path="dashboard" element={<OwnerDashboard />} />
-            <Route path="branches" element={<Branches />} />
-            <Route path="staff" element={<OwnerStaff />} />
+            <Route path="dashboard"   element={<OwnerDashboard />} />
+            <Route path="branches"    element={<Branches />} />
+            <Route path="staff"       element={<OwnerStaff />} />
             <Route path="permissions" element={<Permissions />} />
-            <Route path="reports" element={<Reports />} />
+            <Route path="reports"     element={<Reports />} />
+            <Route path="trips"       element={<Trips />} />
           </Route>
 
           {/* Manager routes (manager + trustedManager) */}
@@ -86,11 +93,12 @@ export default function App() {
           >
             <Route index element={<Navigate to="dashboard" replace />} />
             <Route path="dashboard" element={<ManagerDashboard />} />
-            <Route path="tasks" element={<Tasks />} />
-            <Route path="staff" element={<ManagerStaff />} />
-            <Route path="shifts" element={<Shifts />} />
-            <Route path="checkins" element={<CheckIns />} />
-            <Route path="photos" element={<PhotoReview />} />
+            <Route path="tasks"     element={<Tasks />} />
+            <Route path="staff"     element={<ManagerStaff />} />
+            <Route path="shifts"    element={<Shifts />} />
+            <Route path="checkins"  element={<CheckIns />} />
+            <Route path="photos"    element={<PhotoReview />} />
+            <Route path="trips"     element={<Trips />} />
           </Route>
 
           {/* Staff routes */}
@@ -102,13 +110,26 @@ export default function App() {
               </ProtectedRoute>
             }
           >
-            <Route index                element={<Navigate to="home" replace />} />
-            <Route path="home"          element={<StaffHome />} />
-            <Route path="checkin"       element={<StaffCheckIn />} />
-            <Route path="shifts"        element={<StaffShifts />} />
-            <Route path="settings"      element={<StaffSettings />} />
-            {/* Legacy redirect — old /staff/dashboard links still work */}
-            <Route path="dashboard"     element={<Navigate to="/staff/home" replace />} />
+            <Route index           element={<Navigate to="home" replace />} />
+            <Route path="home"     element={<StaffHome />} />
+            <Route path="checkin"  element={<StaffCheckIn />} />
+            <Route path="shifts"   element={<StaffShifts />} />
+            <Route path="settings" element={<StaffSettings />} />
+            {/* Legacy redirect */}
+            <Route path="dashboard" element={<Navigate to="/staff/home" replace />} />
+          </Route>
+
+          {/* Driver routes */}
+          <Route
+            path="/driver"
+            element={
+              <ProtectedRoute allowedRoles={DRIVER_ROLES}>
+                <DriverLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route index            element={<Navigate to="dashboard" replace />} />
+            <Route path="dashboard" element={<DriverDashboard />} />
           </Route>
 
           {/* Default redirect */}

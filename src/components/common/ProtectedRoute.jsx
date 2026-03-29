@@ -12,8 +12,9 @@ import { useAuth } from '../../context/AuthContext';
 
 // Returns the correct home path for any role, used for cross-role redirects.
 function dashboardForRole(role) {
-  if (role === 'owner')                             return '/owner/dashboard';
+  if (role === 'owner')                                return '/owner/dashboard';
   if (role === 'manager' || role === 'trustedManager') return '/manager/dashboard';
+  if (role === 'driver')                               return '/driver/dashboard';
   // kitchen / floor / cleaning / staff → staff portal
   return '/staff/home';
 }

@@ -1,0 +1,133 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function getUser() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function userRole() {
+      return getUser().role;
+    }
+
+    function isOwner() {
+      return isSignedIn() && userRole() == 'owner';
+    }
+
+    function isManager() {
+      return isSignedIn() && (userRole() == 'manager' || userRole() == 'trustedManager');
+    }
+
+    function isManagerOrOwner() {
+      return isOwner() || isManager();
+    }
+
+    function isStaff() {
+      return isSignedIn() && userRole() in ['staff', 'kitchen', 'floor', 'cleaning'];
+    }
+
+    function isDriver() {
+      return isSignedIn() && userRole() == 'driver';
+    }
+
+    // ── /users ────────────────────────────────────────────────────────────────
+    match /users/{uid} {
+      allow read:   if isSignedIn() && (request.auth.uid == uid || isManagerOrOwner());
+      allow create: if isSignedIn() && request.auth.uid == uid;
+      allow update: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // ── /staff ────────────────────────────────────────────────────────────────
+    match /staff/{staffId} {
+      allow read:   if isSignedIn();
+      allow create: if isManagerOrOwner();
+      allow update: if isManagerOrOwner() || (
+        isSignedIn() &&
+        resource.data.authUid == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['preferredLanguage'])
+      );
+      allow delete: if isOwner();
+    }
+
+    // ── /branches ─────────────────────────────────────────────────────────────
+    match /branches/{branchId} {
+      allow read:   if isSignedIn();
+      allow write:  if isOwner();
+    }
+
+    // ── /tasks ────────────────────────────────────────────────────────────────
+    match /tasks/{taskId} {
+      allow read: if isSignedIn() && (
+        isManagerOrOwner() ||
+        resource.data.assignedTo == request.auth.uid
+      );
+      allow create: if isManagerOrOwner();
+      allow update: if isManagerOrOwner() || (
+        isSignedIn() &&
+        resource.data.assignedTo == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'flagNote', 'photoUrl', 'rejectionReason'])
+      );
+      allow delete: if isManagerOrOwner();
+    }
+
+    // ── /shifts ───────────────────────────────────────────────────────────────
+    match /shifts/{shiftId} {
+      allow read:   if isSignedIn();
+      allow write:  if isManagerOrOwner();
+    }
+
+    // ── /checkInSchedules ─────────────────────────────────────────────────────
+    match /checkInSchedules/{scheduleId} {
+      allow read:   if isSignedIn();
+      allow write:  if isManagerOrOwner();
+    }
+
+    // ── /checkIns ─────────────────────────────────────────────────────────────
+    match /checkIns/{checkInId} {
+      allow read: if isSignedIn() && (
+        isManagerOrOwner() ||
+        resource.data.staffId == request.auth.uid
+      );
+      allow create: if isSignedIn();
+      allow update: if isManagerOrOwner();
+      allow delete: if isManagerOrOwner();
+    }
+
+    // ── /trips ────────────────────────────────────────────────────────────────
+    match /trips/{tripId} {
+      allow list, get: if isSignedIn() && (
+        isManagerOrOwner() ||
+        resource.data.assignedDriver == request.auth.uid
+      );
+      allow create: if isManagerOrOwner();
+      allow update: if isManagerOrOwner() || (
+        isSignedIn() &&
+        resource.data.assignedDriver == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'stops', 'driverLocation',
+                    'startedAt', 'completedAt', 'budgetSpent'])
+      );
+      allow delete: if isManagerOrOwner();
+    }
+
+    // ── /permissions ──────────────────────────────────────────────────────────
+    match /permissions/{permId} {
+      allow read:   if isSignedIn();
+      allow write:  if isOwner();
+    }
+
+    // ── /auditLog ─────────────────────────────────────────────────────────────
+    match /auditLog/{entryId} {
+      allow read:   if isManagerOrOwner();
+      allow create: if isSignedIn();
+      allow update, delete: if false;
+    }
+  }
+}
