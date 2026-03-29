@@ -1,14 +1,4 @@
-// Staff Shifts — shows this week's (Mon–Sun) shift schedule for the signed-in
-// staff member.  Uses onSnapshot for real-time updates.
-//
-// Data model assumed:
-//   /shifts/{id}
-//     assignedStaff: string[]  — array of staffId values
-//     date: string             — "YYYY-MM-DD"
-//     startTime: string        — "HH:MM" (24-h) or readable string
-//     endTime: string          — "HH:MM" (24-h) or readable string
-//     locationName?: string    — optional area/location label
-//     branchId?: string
+// Staff Shifts — 7-day compact row list, orange today highlight, week navigator
 import { useState, useEffect } from 'react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase/config';
@@ -17,20 +7,18 @@ import { useStaffCtx } from '../../context/StaffContext';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-// Returns Monday of the current week as a Date (week starts Mon)
-function getWeekStart() {
+function getWeekStart(offsetWeeks = 0) {
   const now = new Date();
-  const day = now.getDay(); // 0=Sun…6=Sat
-  const diff = (day === 0 ? -6 : 1 - day); // shift to Monday
+  const day = now.getDay();
+  const diff = (day === 0 ? -6 : 1 - day);
   const monday = new Date(now);
-  monday.setDate(now.getDate() + diff);
+  monday.setDate(now.getDate() + diff + offsetWeeks * 7);
   monday.setHours(0, 0, 0, 0);
   return monday;
 }
 
-// Build array of 7 Date objects: Mon → Sun
-function getWeekDays() {
-  const start = getWeekStart();
+function getWeekDays(offsetWeeks = 0) {
+  const start = getWeekStart(offsetWeeks);
   return Array.from({ length: 7 }, (_, i) => {
     const d = new Date(start);
     d.setDate(start.getDate() + i);
@@ -38,21 +26,18 @@ function getWeekDays() {
   });
 }
 
-// YYYY-MM-DD string from a Date
 function toDateStr(date) {
   return date.toISOString().split('T')[0];
 }
 
-// Localized day name ("Monday", "Tuesday", …)
-function dayName(date, lang) {
+function dayAbbr(date, lang) {
   try {
-    return date.toLocaleDateString(lang, { weekday: 'long' });
+    return date.toLocaleDateString(lang, { weekday: 'short' });
   } catch {
-    return date.toLocaleDateString('en', { weekday: 'long' });
+    return date.toLocaleDateString('en', { weekday: 'short' });
   }
 }
 
-// Localized short date ("Mar 27")
 function shortDate(date, lang) {
   try {
     return date.toLocaleDateString(lang, { month: 'short', day: 'numeric' });
@@ -61,24 +46,19 @@ function shortDate(date, lang) {
   }
 }
 
-// Is date in the past? (before today's midnight)
+function isToday(date) {
+  return toDateStr(date) === toDateStr(new Date());
+}
+
 function isPast(date) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   return date < today;
 }
 
-// Is date today?
-function isToday(date) {
-  return toDateStr(date) === toDateStr(new Date());
-}
-
-// Format "HH:MM" or any time string for display
 function formatTime(t) {
   if (!t) return '';
-  // If already readable (e.g. "9:00 AM") return as-is
   if (t.includes('AM') || t.includes('PM') || t.includes('am') || t.includes('pm')) return t;
-  // Parse 24-h "HH:MM"
   const [h, m] = t.split(':').map(Number);
   if (isNaN(h)) return t;
   const period = h >= 12 ? 'PM' : 'AM';
@@ -86,86 +66,109 @@ function formatTime(t) {
   return `${h12}:${String(m).padStart(2, '0')} ${period}`;
 }
 
-// ── Shift Card ────────────────────────────────────────────────────────────────
-function ShiftCard({ date, shift, lang, th, t }) {
-  const today  = isToday(date);
-  const past   = isPast(date);
-
-  const cardBorder = today
-    ? 'border-2 border-indigo-400'
-    : `border ${th.border}`;
-
-  const dayTextColor = past && !today ? th.textFaint : th.text;
-  const timeTextColor = past && !today ? th.textSub : th.text;
+// ── Shift Row ─────────────────────────────────────────────────────────────────
+function ShiftRow({ date, shift, lang, t }) {
+  const today = isToday(date);
+  const past  = isPast(date) && !today;
 
   return (
-    <div className={`rounded-2xl overflow-hidden ${th.cardBg} ${cardBorder} ${past && !today ? 'opacity-60' : ''}`}>
-      {/* Colored top bar for today */}
-      {today && <div className="h-1.5 bg-indigo-500" />}
+    <div
+      className="flex items-center gap-3 px-4 py-3 rounded-2xl"
+      style={{
+        backgroundColor: today ? 'var(--color-primary)' : 'var(--surface)',
+        border: today ? 'none' : '1px solid var(--border)',
+        opacity: past ? 0.55 : 1,
+        boxShadow: today ? '0 4px 16px rgba(249,115,22,0.25)' : 'var(--shadow)',
+      }}
+    >
+      {/* Day column */}
+      <div className="w-14 flex-shrink-0 text-center">
+        <p
+          className="text-xs font-semibold uppercase tracking-wide"
+          style={{ color: today ? 'rgba(255,255,255,0.8)' : 'var(--text-sub)' }}
+        >
+          {dayAbbr(date, lang)}
+        </p>
+        <p
+          className="text-lg font-bold leading-none mt-0.5"
+          style={{ color: today ? '#fff' : 'var(--text)' }}
+        >
+          {date.getDate()}
+        </p>
+      </div>
 
-      <div className="p-5">
-        {/* Day name + date row */}
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <h3 className={`font-bold text-lg leading-tight ${dayTextColor}`}>
-              {dayName(date, lang)}
-            </h3>
-            <p className={`text-xs mt-0.5 ${th.textSub}`}>{shortDate(date, lang)}</p>
-          </div>
-          {today && (
-            <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-indigo-100 text-indigo-700">
-              {t('today')}
-            </span>
-          )}
-        </div>
+      {/* Divider */}
+      <div
+        className="w-px self-stretch flex-shrink-0"
+        style={{ backgroundColor: today ? 'rgba(255,255,255,0.3)' : 'var(--border)' }}
+      />
 
+      {/* Shift info */}
+      <div className="flex-1 min-w-0">
         {shift ? (
           <>
-            {/* Time block */}
-            <div className="flex items-center gap-2">
-              <span className={`text-base ${th.textSub}`}>🕐</span>
-              <span className={`font-semibold text-base ${timeTextColor}`}>
-                {formatTime(shift.startTime)} → {formatTime(shift.endTime)}
-              </span>
-            </div>
-            {/* Location label if present */}
+            <p
+              className="text-sm font-semibold"
+              style={{ color: today ? '#fff' : 'var(--text)' }}
+            >
+              {formatTime(shift.startTime)} → {formatTime(shift.endTime)}
+            </p>
             {shift.locationName && (
-              <p className={`text-xs mt-1.5 ${th.textSub}`}>📍 {shift.locationName}</p>
+              <p
+                className="text-xs mt-0.5 truncate"
+                style={{ color: today ? 'rgba(255,255,255,0.75)' : 'var(--text-sub)' }}
+              >
+                📍 {shift.locationName}
+              </p>
             )}
           </>
         ) : (
-          // Day has no shift — show a dim dash
-          <p className={`text-sm ${th.textFaint}`}>—</p>
+          <p
+            className="text-sm"
+            style={{ color: today ? 'rgba(255,255,255,0.6)' : 'var(--text-faint)' }}
+          >
+            {t('dayOff') ?? 'Day off'}
+          </p>
         )}
       </div>
+
+      {/* Today pill */}
+      {today && (
+        <span
+          className="flex-shrink-0 text-xs font-bold px-2.5 py-1 rounded-full"
+          style={{ backgroundColor: 'rgba(255,255,255,0.2)', color: '#fff' }}
+        >
+          {t('today')}
+        </span>
+      )}
     </div>
   );
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function StaffShifts() {
-  const { t, lang, th } = useStaffCtx();
-  const { userProfile }  = useAuth();
+  const { t, lang }  = useStaffCtx();
+  const { userProfile } = useAuth();
 
-  const [shiftsMap, setShiftsMap] = useState({}); // { "YYYY-MM-DD" → shift doc }
-  const [loading,   setLoading]   = useState(true);
+  const [shiftsMap,   setShiftsMap]   = useState({});
+  const [loading,     setLoading]     = useState(true);
+  const [weekOffset,  setWeekOffset]  = useState(0);
 
   const staffId = userProfile?.staffId;
-  const weekDays = getWeekDays(); // Mon→Sun of current week
+  const weekDays  = getWeekDays(weekOffset);
   const weekStart = toDateStr(weekDays[0]);
   const weekEnd   = toDateStr(weekDays[6]);
 
   // ── Firestore: this week's shifts ────────────────────────────────────────
   useEffect(() => {
     if (!staffId) return;
-
+    setLoading(true);
     const q = query(
       collection(db, 'shifts'),
       where('assignedStaff', 'array-contains', staffId),
       where('date', '>=', weekStart),
       where('date', '<=', weekEnd),
     );
-
     const unsub = onSnapshot(q, (snap) => {
       const map = {};
       snap.docs.forEach((d) => {
@@ -175,45 +178,70 @@ export default function StaffShifts() {
       setShiftsMap(map);
       setLoading(false);
     }, () => setLoading(false));
-
     return unsub;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [staffId, weekStart, weekEnd]);
 
-  const hasAnyShift = weekDays.some((d) => shiftsMap[toDateStr(d)]);
+  // Week label
+  const weekLabel = (() => {
+    if (weekOffset === 0) return t('thisWeek') ?? 'This Week';
+    if (weekOffset === -1) return t('lastWeek') ?? 'Last Week';
+    if (weekOffset === 1) return t('nextWeek') ?? 'Next Week';
+    const s = weekDays[0];
+    const e = weekDays[6];
+    try {
+      return `${s.toLocaleDateString(lang, { month: 'short', day: 'numeric' })} – ${e.toLocaleDateString(lang, { month: 'short', day: 'numeric' })}`;
+    } catch {
+      return `${s.toLocaleDateString('en', { month: 'short', day: 'numeric' })} – ${e.toLocaleDateString('en', { month: 'short', day: 'numeric' })}`;
+    }
+  })();
 
   return (
-    <div className={`min-h-full ${th.pageBg}`}>
+    <div className="min-h-full" style={{ backgroundColor: 'var(--bg)' }}>
 
-      {/* ── Header ─────────────────────────────────────────────────────── */}
-      <div className={`px-5 pt-10 pb-5 ${th.cardBg} border-b ${th.border}`}>
-        <h1 className={`text-2xl font-bold ${th.text}`}>{t('myShifts')}</h1>
-        <p className={`text-xs mt-1 ${th.textSub}`}>{t('thisWeek')}</p>
+      {/* ── Header with week navigator ───────────────────────────────── */}
+      <div className="px-5 pt-12 pb-4" style={{ backgroundColor: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
+        <h1 className="text-2xl font-bold" style={{ color: 'var(--text)' }}>{t('myShifts')}</h1>
+
+        {/* Week navigator */}
+        <div className="flex items-center justify-between mt-3">
+          <button
+            onClick={() => setWeekOffset((o) => o - 1)}
+            className="w-9 h-9 rounded-xl flex items-center justify-center active:opacity-70 transition-opacity"
+            style={{ backgroundColor: 'var(--surface2)', color: 'var(--text)' }}
+          >
+            ‹
+          </button>
+          <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
+            {weekLabel}
+          </p>
+          <button
+            onClick={() => setWeekOffset((o) => o + 1)}
+            className="w-9 h-9 rounded-xl flex items-center justify-center active:opacity-70 transition-opacity"
+            style={{ backgroundColor: 'var(--surface2)', color: 'var(--text)' }}
+          >
+            ›
+          </button>
+        </div>
       </div>
 
-      {/* ── Content ────────────────────────────────────────────────────── */}
-      <div className="px-4 py-5">
+      {/* ── Shift rows ───────────────────────────────────────────────── */}
+      <div className="px-4 py-4">
         {loading ? (
           <div className="flex justify-center py-20">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500" />
-          </div>
-        ) : !hasAnyShift ? (
-          // Empty state
-          <div className="flex flex-col items-center justify-center py-20 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-gray-100 flex items-center justify-center mb-4">
-              <span className="text-3xl">📅</span>
-            </div>
-            <p className={`font-semibold ${th.text}`}>{t('noShiftsThisWeek')}</p>
+            <div
+              className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
+              style={{ borderColor: 'var(--color-primary)', borderTopColor: 'transparent' }}
+            />
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-2">
             {weekDays.map((date) => (
-              <ShiftCard
+              <ShiftRow
                 key={toDateStr(date)}
                 date={date}
                 shift={shiftsMap[toDateStr(date)] ?? null}
                 lang={lang}
-                th={th}
                 t={t}
               />
             ))}
