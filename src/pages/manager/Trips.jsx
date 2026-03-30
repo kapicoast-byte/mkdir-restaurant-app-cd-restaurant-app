@@ -69,6 +69,7 @@ const emptyStop = () => ({
   id: uid(),
   placeName: '',
   address: '',
+  coordinates: null,
   items: [],
   status: 'pending',
   receiptPhotoUrl: '',
@@ -150,6 +151,67 @@ function Field({ label, children }) {
   );
 }
 
+// ── Places Autocomplete input ─────────────────────────────────────────────────
+function PlacesAutocompleteInput({ value, onPlaceSelect, style }) {
+  const inputRef = useRef(null);
+  const autocompleteRef = useRef(null);
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    let attempts = 0;
+    const maxAttempts = 50; // 5 seconds
+
+    function init() {
+      if (!inputRef.current) return;
+      if (!window.google?.maps?.places) {
+        if (attempts++ < maxAttempts) setTimeout(init, 100);
+        return;
+      }
+      autocompleteRef.current = new window.google.maps.places.Autocomplete(
+        inputRef.current,
+        { types: ['establishment', 'geocode'], componentRestrictions: { country: 'in' } }
+      );
+      autocompleteRef.current.addListener('place_changed', () => {
+        const place = autocompleteRef.current.getPlace();
+        if (!place?.geometry) return;
+        onPlaceSelect({
+          address: place.formatted_address ?? '',
+          placeName: place.name ?? '',
+          coordinates: {
+            lat: place.geometry.location.lat(),
+            lng: place.geometry.location.lng(),
+          },
+        });
+      });
+    }
+
+    init();
+
+    return () => {
+      if (window.google?.maps?.event && autocompleteRef.current) {
+        window.google.maps.event.clearInstanceListeners(autocompleteRef.current);
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      defaultValue={value}
+      placeholder="Search for a place or address"
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      style={{
+        ...style,
+        border: focused ? '1px solid #F97316' : '1px solid var(--border)',
+        boxShadow: focused ? '0 0 0 2px rgba(249,115,22,0.25)' : 'none',
+      }}
+    />
+  );
+}
+
 // ── Stop editor (inside Create modal) ────────────────────────────────────────
 function StopEditor({ stop, idx, total, onChange, onRemove, onMoveUp, onMoveDown }) {
   const updateField = (key, val) => onChange({ ...stop, [key]: val });
@@ -186,8 +248,13 @@ function StopEditor({ stop, idx, total, onChange, onRemove, onMoveUp, onMoveDown
 
       <Field label="Address">
         <div className="flex gap-2">
-          <input style={{ ...inputStyle, flex: 1 }} value={stop.address}
-            onChange={(e) => updateField('address', e.target.value)} placeholder="Full address" />
+          <PlacesAutocompleteInput
+            value={stop.address}
+            style={{ ...inputStyle, flex: 1 }}
+            onPlaceSelect={({ address, placeName, coordinates }) =>
+              onChange({ ...stop, address, placeName, coordinates })
+            }
+          />
           {stop.address && (
             <a href={mapsSearchUrl(stop.address)} target="_blank" rel="noreferrer"
               className="flex-shrink-0 px-3 py-2 rounded-lg text-xs font-semibold"
@@ -473,7 +540,7 @@ function TripMapSection({ stops, driverLoc }) {
       <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-sub)' }}>
         Live Map
       </p>
-      <APIProvider apiKey={MAPS_KEY}>
+      <APIProvider apiKey={MAPS_KEY} libraries={['places']}>
         <div
           className="rounded-xl overflow-hidden"
           style={{ border: '1px solid var(--border)', height: 300 }}
