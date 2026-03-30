@@ -6,7 +6,7 @@
 //  • Trip Detail modal: stops list, receipt photos, budget breakdown, live map
 //  • Cancel trip with confirm
 //  • Real-time via onSnapshot on /trips (filtered to branchId)
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   collection, query, where, onSnapshot,
   addDoc, updateDoc, doc, serverTimestamp, orderBy,
@@ -14,6 +14,14 @@ import {
 import { db } from '../../firebase/config';
 import { useAuth } from '../../context/AuthContext';
 import toast from 'react-hot-toast';
+import {
+  APIProvider,
+  Map,
+  AdvancedMarker,
+  useMap,
+} from '@vis.gl/react-google-maps';
+
+const MAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY ?? '';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function uid() {
@@ -380,6 +388,130 @@ function CreateTripModal({ drivers, branchId, createdBy, onClose, onCreated }) {
   );
 }
 
+// ── Google Map helpers ────────────────────────────────────────────────────────
+
+// Fits map bounds to all valid positions whenever they change
+function MapBoundsFitter({ positions }) {
+  const map = useMap();
+  const fitted = useRef(false);
+
+  useEffect(() => {
+    if (!map || positions.length === 0) return;
+    if (typeof window.google === 'undefined') return;
+
+    const bounds = new window.google.maps.LatLngBounds();
+    positions.forEach((p) => bounds.extend(p));
+
+    if (positions.length === 1) {
+      map.setCenter(positions[0]);
+      map.setZoom(15);
+    } else {
+      map.fitBounds(bounds, /* padding */ 60);
+    }
+    fitted.current = true;
+  // re-fit only when position count or content changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, positions.length, JSON.stringify(positions)]);
+
+  return null;
+}
+
+// Numbered orange stop marker using a plain HTML element inside AdvancedMarker
+function StopMarker({ position, label }) {
+  return (
+    <AdvancedMarker position={position}>
+      <div style={{
+        width: 28, height: 28, borderRadius: '50%',
+        background: 'var(--color-primary)', color: '#fff',
+        border: '2px solid #fff', display: 'flex',
+        alignItems: 'center', justifyContent: 'center',
+        fontWeight: 700, fontSize: 12,
+        boxShadow: '0 2px 6px rgba(0,0,0,0.35)',
+      }}>
+        {label}
+      </div>
+    </AdvancedMarker>
+  );
+}
+
+// Teal driver marker
+function DriverMarker({ position }) {
+  return (
+    <AdvancedMarker position={position}>
+      <div style={{
+        width: 32, height: 32, borderRadius: '50%',
+        background: '#0D9488', color: '#fff',
+        border: '2px solid #fff', display: 'flex',
+        alignItems: 'center', justifyContent: 'center',
+        fontSize: 16, boxShadow: '0 2px 6px rgba(0,0,0,0.35)',
+      }}>
+        🚗
+      </div>
+    </AdvancedMarker>
+  );
+}
+
+// Full map block rendered inside the detail modal
+function TripMapSection({ stops, driverLoc }) {
+  if (!MAPS_KEY) return null;
+
+  const stopPositions = (stops ?? [])
+    .filter((s) => s.lat != null && s.lng != null)
+    .map((s) => ({ lat: Number(s.lat), lng: Number(s.lng) }));
+
+  const driverPos = (driverLoc?.lat != null && driverLoc?.lng != null)
+    ? { lat: Number(driverLoc.lat), lng: Number(driverLoc.lng) }
+    : null;
+
+  const allPositions = [...stopPositions, ...(driverPos ? [driverPos] : [])];
+
+  // Default center: geographic center of the first valid position or a fallback
+  const defaultCenter = allPositions[0] ?? { lat: 24.86, lng: 67.01 };
+
+  return (
+    <div>
+      <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-sub)' }}>
+        Live Map
+      </p>
+      <APIProvider apiKey={MAPS_KEY}>
+        <div
+          className="rounded-xl overflow-hidden"
+          style={{ border: '1px solid var(--border)', height: 300 }}
+        >
+          <Map
+            style={{ width: '100%', height: '100%' }}
+            defaultCenter={defaultCenter}
+            defaultZoom={11}
+            gestureHandling="greedy"
+            disableDefaultUI
+            mapId={import.meta.env.VITE_GOOGLE_MAPS_MAP_ID ?? 'DEMO_MAP_ID'}
+          >
+            <MapBoundsFitter positions={allPositions} />
+
+            {(stops ?? []).map((stop, idx) =>
+              stop.lat != null && stop.lng != null ? (
+                <StopMarker
+                  key={stop.id ?? idx}
+                  position={{ lat: Number(stop.lat), lng: Number(stop.lng) }}
+                  label={idx + 1}
+                />
+              ) : null
+            )}
+
+            {driverPos && <DriverMarker position={driverPos} />}
+          </Map>
+        </div>
+      </APIProvider>
+
+      {driverLoc?.updatedAt && (
+        <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
+          Driver location updated {formatTs(driverLoc.updatedAt)}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ── Trip Detail Modal ─────────────────────────────────────────────────────────
 function TripDetailModal({ trip, onClose, onStatusChange }) {
   const [enlargedPhoto, setEnlargedPhoto] = useState(null);
@@ -387,7 +519,6 @@ function TripDetailModal({ trip, onClose, onStatusChange }) {
   const [showCancel,    setShowCancel]    = useState(false);
 
   const loc = trip.driverLocation;
-  const hasLocation = loc?.lat && loc?.lng;
 
   const totalEstimated = (trip.stops ?? []).reduce((sum, s) => {
     return sum + (s.items ?? []).reduce((si, i) => si + (Number(i.estimatedPrice) * Number(i.quantity) || 0), 0);
@@ -461,30 +592,8 @@ function TripDetailModal({ trip, onClose, onStatusChange }) {
             </div>
           )}
 
-          {/* Live map — OpenStreetMap embed, no API key required */}
-          {hasLocation && (
-            <div>
-              <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-sub)' }}>Driver Location</p>
-              <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--border)' }}>
-                <iframe
-                  title="driver-map"
-                  width="100%"
-                  height="220"
-                  frameBorder="0"
-                  src={`https://www.openstreetmap.org/export/embed.html?bbox=${loc.lng - 0.01},${loc.lat - 0.01},${loc.lng + 0.01},${loc.lat + 0.01}&layer=mapnik&marker=${loc.lat},${loc.lng}`}
-                  style={{ display: 'block' }}
-                />
-              </div>
-              <a
-                href={`https://www.google.com/maps?q=${loc.lat},${loc.lng}`}
-                target="_blank" rel="noreferrer"
-                className="text-xs font-semibold mt-1 inline-block"
-                style={{ color: 'var(--color-primary)' }}
-              >
-                Open in Google Maps ↗
-              </a>
-            </div>
-          )}
+          {/* Google Map — stops + driver location */}
+          <TripMapSection stops={trip.stops} driverLoc={trip.driverLocation} />
 
           {/* Stops */}
           <div>
@@ -508,15 +617,14 @@ function TripDetailModal({ trip, onClose, onStatusChange }) {
                       <div className="flex items-start justify-between gap-2 mb-1">
                         <div className="flex items-center gap-2">
                           <span className="text-base font-bold w-5 text-center" style={{ color: ss.color }}>{ss.icon}</span>
-                          <div>
+                          <div className="flex-1 min-w-0">
                             <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
                               {idx + 1}. {stop.placeName || '—'}
                             </p>
                             {stop.address && (
-                              <a href={mapsSearchUrl(stop.address)} target="_blank" rel="noreferrer"
-                                className="text-xs" style={{ color: '#2563EB' }}>
-                                {stop.address} ↗
-                              </a>
+                              <p className="text-xs truncate" style={{ color: 'var(--text-sub)' }}>
+                                {stop.address}
+                              </p>
                             )}
                           </div>
                         </div>
@@ -530,6 +638,18 @@ function TripDetailModal({ trip, onClose, onStatusChange }) {
                             <span className="text-xs" style={{ color: 'var(--text-sub)' }}>
                               (est. ₹{stopEstimate})
                             </span>
+                          )}
+                          {stop.address && (
+                            <a
+                              href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(stop.address)}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="flex-shrink-0 px-2 py-1 rounded-lg text-xs font-semibold"
+                              style={{ backgroundColor: '#EFF6FF', color: '#2563EB' }}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              Navigate ↗
+                            </a>
                           )}
                         </div>
                       </div>
