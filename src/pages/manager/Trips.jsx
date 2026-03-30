@@ -295,8 +295,10 @@ function StopEditor({ stop, idx, total, onChange, onRemove, onMoveUp, onMoveDown
 
 // ── Create Trip Modal ─────────────────────────────────────────────────────────
 function CreateTripModal({ drivers, branchId, createdBy, onClose, onCreated }) {
-  const [form,    setForm]    = useState(emptyForm);
-  const [saving,  setSaving]  = useState(false);
+  const [form,        setForm]        = useState(emptyForm);
+  const [saving,      setSaving]      = useState(false);
+  const [optimizing,  setOptimizing]  = useState(false);
+  const [routeInfo,   setRouteInfo]   = useState(null); // { distance, duration }
 
   const set = (key, val) => setForm((f) => ({ ...f, [key]: val }));
 
@@ -321,6 +323,59 @@ function CreateTripModal({ drivers, branchId, createdBy, onClose, onCreated }) {
     [stops[idx], stops[target]] = [stops[target], stops[idx]];
     return { ...f, stops };
   });
+
+  const optimizeRoute = () => {
+    const stops = form.stops;
+    if (stops.length < 2) return;
+    if (!window.google?.maps) return toast.error('Maps not loaded yet');
+
+    setOptimizing(true);
+    setRouteInfo(null);
+
+    const middleStops = stops.slice(1, -1);
+    const directionsService = new window.google.maps.DirectionsService();
+
+    directionsService.route(
+      {
+        origin:      stops[0].address,
+        destination: stops[stops.length - 1].address,
+        waypoints:   middleStops.map((s) => ({ location: s.address, stopover: true })),
+        optimizeWaypoints: true,
+        travelMode:  window.google.maps.TravelMode.DRIVING,
+      },
+      (result, status) => {
+        setOptimizing(false);
+        if (status !== 'OK') {
+          toast.error('Route optimization failed');
+          return;
+        }
+
+        const route = result.routes[0];
+        const waypointOrder = route.waypoint_order; // indices into middleStops
+
+        // Rebuild stops: first + reordered middles + last
+        const reordered = [
+          stops[0],
+          ...waypointOrder.map((i) => middleStops[i]),
+          stops[stops.length - 1],
+        ];
+
+        // Sum distance and duration across all legs
+        let totalMeters = 0;
+        let totalSeconds = 0;
+        route.legs.forEach((leg) => {
+          totalMeters  += leg.distance.value;
+          totalSeconds += leg.duration.value;
+        });
+        const distKm  = (totalMeters / 1000).toFixed(1);
+        const durMins = Math.round(totalSeconds / 60);
+
+        setForm((f) => ({ ...f, stops: reordered }));
+        setRouteInfo({ distance: distKm, duration: durMins });
+        toast.success('Route optimized!');
+      }
+    );
+  };
 
   const handleDriverChange = (uid) => {
     const d = drivers.find((dr) => dr.authUid === uid || dr.id === uid);
@@ -441,6 +496,28 @@ function CreateTripModal({ drivers, branchId, createdBy, onClose, onCreated }) {
                   onMoveDown={() => moveStop(idx, 1)} />
               ))}
             </div>
+
+            {form.stops.length >= 2 && (
+              <div className="mt-3 space-y-2">
+                <button
+                  type="button"
+                  onClick={optimizeRoute}
+                  disabled={optimizing}
+                  className="w-full py-2 rounded-xl text-sm font-semibold disabled:opacity-60"
+                  style={{
+                    border: '1.5px solid var(--color-primary)',
+                    color: optimizing ? 'var(--text-sub)' : 'var(--color-primary)',
+                    backgroundColor: 'transparent',
+                  }}>
+                  {optimizing ? 'Optimizing…' : '✨ Optimize Route'}
+                </button>
+                {routeInfo && (
+                  <p className="text-xs text-center" style={{ color: 'var(--text-sub)' }}>
+                    🛣️ Total distance: {routeInfo.distance} km &nbsp;•&nbsp; ⏱️ Estimated time: {routeInfo.duration} mins
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Submit */}
