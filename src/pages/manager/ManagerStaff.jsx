@@ -9,7 +9,7 @@ import EmptyState from '../../components/common/EmptyState';
 const AVATAR_BG = {
   owner: '#F97316', trustedManager: '#8B5CF6', manager: '#3B82F6',
   staff: '#6B7280', kitchen: '#22C55E', floor: '#F59E0B', cleaning: '#94A3B8',
-  driver: '#06B6D4',
+  driver: '#0D9488',
 };
 
 const ROLE_BADGE = {
@@ -20,7 +20,7 @@ const ROLE_BADGE = {
   kitchen:        { bg: '#F0FDF4', color: '#16A34A', label: 'Kitchen' },
   floor:          { bg: '#FFFBEB', color: '#D97706', label: 'Floor' },
   cleaning:       { bg: '#F8FAFC', color: '#64748B', label: 'Cleaning' },
-  driver:         { bg: '#ECFEFF', color: '#0891B2', label: 'Driver' },
+  driver:         { bg: '#F0FDFA', color: '#0D9488', label: 'Driver' },
 };
 
 function getInitials(name = '') {

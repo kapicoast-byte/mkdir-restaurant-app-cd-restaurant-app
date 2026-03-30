@@ -62,7 +62,7 @@ const ROLE_BADGE = {
   kitchen:        { bg: '#F0FDF4', color: '#16A34A', label: 'Kitchen' },
   floor:          { bg: '#FFFBEB', color: '#D97706', label: 'Floor' },
   cleaning:       { bg: '#F8FAFC', color: '#64748B', label: 'Cleaning' },
-  driver:         { bg: '#ECFEFF', color: '#0891B2', label: 'Driver' },
+  driver:         { bg: '#F0FDFA', color: '#0D9488', label: 'Driver' },
 };
 
 const AVATAR_BG = {
@@ -73,7 +73,7 @@ const AVATAR_BG = {
   kitchen:        '#22C55E',
   floor:          '#F59E0B',
   cleaning:       '#94A3B8',
-  driver:         '#06B6D4',
+  driver:         '#0D9488',
 };
 
 function RoleBadge({ role }) {

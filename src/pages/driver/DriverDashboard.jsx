@@ -33,7 +33,7 @@ function TripCard({ trip }) {
       className="rounded-2xl p-4"
       style={{
         backgroundColor: 'var(--surface)',
-        border: trip.status === 'in_progress' ? '2px solid #06B6D4' : '1px solid var(--border)',
+        border: trip.status === 'in_progress' ? '2px solid #0D9488' : '1px solid var(--border)',
         boxShadow: trip.status === 'in_progress' ? '0 0 0 4px rgba(6,182,212,0.1)' : 'var(--shadow)',
       }}
     >
@@ -66,7 +66,7 @@ function TripCard({ trip }) {
           <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--surface2)' }}>
             <div
               className="h-full rounded-full transition-all"
-              style={{ width: `${spentPct}%`, backgroundColor: spentPct > 90 ? '#EF4444' : '#06B6D4' }}
+              style={{ width: `${spentPct}%`, backgroundColor: spentPct > 90 ? '#EF4444' : '#0D9488' }}
             />
           </div>
         </div>
@@ -107,7 +107,7 @@ export default function DriverDashboard() {
       {/* Header */}
       <div
         className="px-5 pt-10 pb-5"
-        style={{ background: 'linear-gradient(135deg, #06B6D4 0%, #0891B2 100%)' }}
+        style={{ background: 'linear-gradient(135deg, #0D9488 0%, #0891B2 100%)' }}
       >
         <p className="text-sm text-white/80 mb-0.5">Driver Portal</p>
         <h1 className="text-2xl font-bold text-white">My Trips</h1>
@@ -126,7 +126,7 @@ export default function DriverDashboard() {
           <div className="flex justify-center py-20">
             <div
               className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
-              style={{ borderColor: '#06B6D4', borderTopColor: 'transparent' }}
+              style={{ borderColor: '#0D9488', borderTopColor: 'transparent' }}
             />
           </div>
         ) : trips.length === 0 ? (

@@ -53,7 +53,7 @@ export default function DriverLayout() {
         <div className="flex items-center gap-2.5">
           <div
             className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
-            style={{ backgroundColor: '#06B6D4' }}
+            style={{ backgroundColor: '#0D9488' }}
           >
             D
           </div>
@@ -70,7 +70,7 @@ export default function DriverLayout() {
           </button>
           <div
             className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white"
-            style={{ backgroundColor: '#06B6D4' }}
+            style={{ backgroundColor: '#0D9488' }}
           >
             {getInitials(userProfile?.name ?? '')}
           </div>
@@ -98,14 +98,14 @@ export default function DriverLayout() {
               <>
                 <div
                   className="w-1 h-1 rounded-full mb-1 transition-all"
-                  style={{ backgroundColor: isActive ? '#06B6D4' : 'transparent' }}
+                  style={{ backgroundColor: isActive ? '#0D9488' : 'transparent' }}
                 />
-                <span style={{ color: isActive ? '#06B6D4' : 'var(--text-faint)' }}>
+                <span style={{ color: isActive ? '#0D9488' : 'var(--text-faint)' }}>
                   <NavIcon />
                 </span>
                 <span
                   className="text-xs font-medium mt-0.5 leading-none"
-                  style={{ color: isActive ? '#06B6D4' : 'var(--text-faint)' }}
+                  style={{ color: isActive ? '#0D9488' : 'var(--text-faint)' }}
                 >
                   {label}
                 </span>
