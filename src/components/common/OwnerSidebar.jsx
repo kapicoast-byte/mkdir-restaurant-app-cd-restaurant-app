@@ -3,11 +3,12 @@ import { NavLink } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 
 const navItems = [
-  { to: '/owner/dashboard', label: 'Dashboard',   icon: '▦'  },
-  { to: '/owner/branches',  label: 'Branches',    icon: '🏢' },
-  { to: '/owner/staff',     label: 'Staff',       icon: '👥' },
-  { to: '/owner/permissions',label: 'Permissions',icon: '🔐' },
-  { to: '/owner/reports',   label: 'Reports',     icon: '📊' },
+  { to: '/owner/dashboard',  label: 'Dashboard',   icon: '▦'  },
+  { to: '/owner/branches',   label: 'Branches',    icon: '🏢' },
+  { to: '/owner/staff',      label: 'Staff',       icon: '👥' },
+  { to: '/owner/trips',      label: 'Trips',       icon: '🚗' },
+  { to: '/owner/permissions',label: 'Permissions', icon: '🔐' },
+  { to: '/owner/reports',    label: 'Reports',     icon: '📊' },
 ];
 
 export default function OwnerSidebar() {

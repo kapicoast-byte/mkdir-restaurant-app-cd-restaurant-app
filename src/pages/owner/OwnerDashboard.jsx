@@ -1,6 +1,6 @@
 // Owner dashboard — greeting, stat cards, branch health grid, photo audit
 import { useEffect, useState } from 'react';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { Link } from 'react-router-dom';
 import { db } from '../../firebase/config';
 import { useAuth } from '../../context/AuthContext';
@@ -120,6 +120,7 @@ export default function OwnerDashboard() {
   const [branches,    setBranches]    = useState([]);
   const [allStaff,    setAllStaff]    = useState([]);
   const [allTasks,    setAllTasks]    = useState([]);
+  const [allTrips,    setAllTrips]    = useState([]);
   const [loading,     setLoading]     = useState(true);
   const [auditBranch, setAuditBranch] = useState('all');
   const [lightboxUrl, setLightboxUrl] = useState(null);
@@ -142,8 +143,12 @@ export default function OwnerDashboard() {
         setLoading(false);
       }
     );
+    const unsubTrips = onSnapshot(
+      query(collection(db, 'trips'), orderBy('createdAt', 'desc')),
+      (snap) => setAllTrips(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+    );
 
-    return () => { unsubBranches(); unsubStaff(); unsubTasks(); };
+    return () => { unsubBranches(); unsubStaff(); unsubTasks(); unsubTrips(); };
   }, [user]);
 
   if (loading) return <LoadingSpinner message="Loading dashboard..." />;
@@ -206,11 +211,14 @@ export default function OwnerDashboard() {
         <StatCard label="Total Branches"        value={branches.length}     />
         <StatCard label="Active Staff"          value={allStaff.length}     />
         <StatCard label="Tasks Completed Today" value={completedToday}       accent />
-        <StatCard
-          label="Overdue Tasks"
-          value={overdueTasks}
-          accent={overdueTasks > 0}
-        />
+        <Link to="/owner/trips" style={{ textDecoration: 'none' }}>
+          <StatCard
+            label="Active Trips"
+            value={allTrips.filter((t) => t.status === 'in_progress').length}
+            sub={`${allTrips.filter((t) => t.status === 'pending').length} pending`}
+            accent
+          />
+        </Link>
       </div>
 
       {/* ── Branches section ───────────────────────────────────────────────── */}

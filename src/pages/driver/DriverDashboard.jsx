@@ -4,7 +4,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   collection, query, where, onSnapshot,
-  doc, updateDoc, serverTimestamp,
+  doc, updateDoc, serverTimestamp, arrayRemove,
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../../firebase/config';
@@ -17,6 +17,16 @@ function getGreeting() {
   if (h < 12) return 'Good Morning';
   if (h < 17) return 'Good Afternoon';
   return 'Good Evening';
+}
+
+function formatDuration(startTs, endTs) {
+  if (!startTs || !endTs) return null;
+  const start = startTs?.toDate ? startTs.toDate() : new Date(startTs);
+  const end   = endTs?.toDate   ? endTs.toDate()   : new Date(endTs);
+  const mins  = Math.round((end - start) / 60000);
+  if (mins < 60) return `${mins} min${mins === 1 ? '' : 's'}`;
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return `${h}h ${m}m`;
 }
 
 function getInitials(name = '') {
@@ -63,6 +73,116 @@ function Skeleton() {
       <div className="h-3 rounded-lg w-1/3" style={{ backgroundColor: 'var(--surface2)' }} />
       <div className="h-2 rounded-full" style={{ backgroundColor: 'var(--surface2)' }} />
       <div className="h-12 rounded-xl" style={{ backgroundColor: 'var(--surface2)' }} />
+    </div>
+  );
+}
+
+// ── Trip Summary Modal ────────────────────────────────────────────────────────
+function TripSummaryModal({ trip, onClose }) {
+  const stops = trip.stops ?? [];
+  const totalEstimated = stops.reduce((sum, s) =>
+    sum + (s.items ?? []).reduce((si, i) => si + (Number(i.estimatedPrice) * Number(i.quantity) || 0), 0), 0);
+  const totalActual = stops.reduce((sum, s) => sum + (Number(s.actualSpend) || 0), 0);
+  const duration = formatDuration(trip.startedAt, trip.completedAt);
+  const issues  = stops.filter((s) => s.status === 'issue');
+  const receipts = stops.filter((s) => s.receiptPhotoUrl);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center"
+      style={{ backgroundColor: 'rgba(0,0,0,0.7)' }}
+      onClick={onClose}>
+      <div className="w-full max-w-lg rounded-t-3xl shadow-2xl overflow-y-auto"
+        style={{ backgroundColor: 'var(--surface)', maxHeight: '90vh' }}
+        onClick={(e) => e.stopPropagation()}>
+
+        {/* Handle */}
+        <div className="w-10 h-1 rounded-full mx-auto mt-3 mb-4"
+          style={{ backgroundColor: 'var(--border)' }} />
+
+        {/* Orange header */}
+        <div className="text-center pb-5 px-6" style={{ borderBottom: '1px solid var(--border)' }}>
+          <div className="text-4xl mb-2">🏁</div>
+          <h2 className="text-xl font-bold" style={{ color: 'var(--text)' }}>Trip Complete!</h2>
+          <p className="text-sm mt-0.5" style={{ color: 'var(--text-sub)' }}>{trip.title}</p>
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          {/* Stats */}
+          <div className="grid grid-cols-3 gap-2">
+            {duration && (
+              <div className="rounded-xl p-3 text-center" style={{ backgroundColor: 'var(--surface2)' }}>
+                <p className="text-xs font-semibold mb-1" style={{ color: 'var(--text-sub)' }}>Time</p>
+                <p className="font-bold text-sm" style={{ color: 'var(--text)' }}>{duration}</p>
+              </div>
+            )}
+            <div className="rounded-xl p-3 text-center" style={{ backgroundColor: 'var(--surface2)' }}>
+              <p className="text-xs font-semibold mb-1" style={{ color: 'var(--text-sub)' }}>Stops</p>
+              <p className="font-bold text-sm" style={{ color: '#16A34A' }}>
+                {stops.filter((s) => s.status === 'done').length}/{stops.length}
+              </p>
+            </div>
+            <div className="rounded-xl p-3 text-center" style={{ backgroundColor: 'var(--surface2)' }}>
+              <p className="text-xs font-semibold mb-1" style={{ color: 'var(--text-sub)' }}>Spent</p>
+              <p className="font-bold text-sm" style={{ color: '#F97316' }}>₹{totalActual}</p>
+            </div>
+          </div>
+
+          {/* Per-stop spend */}
+          <div>
+            <p className="text-sm font-semibold mb-2" style={{ color: 'var(--text)' }}>Spend per stop</p>
+            {stops.map((s, idx) => {
+              const est = (s.items ?? []).reduce((sum, i) => sum + (Number(i.estimatedPrice) * Number(i.quantity) || 0), 0);
+              return (
+                <div key={s.id ?? idx} className="flex items-center justify-between py-2 text-sm"
+                  style={{ borderBottom: '1px solid var(--border)' }}>
+                  <span className="truncate flex-1" style={{ color: 'var(--text)' }}>
+                    {idx + 1}. {s.placeName || `Stop ${idx + 1}`}
+                  </span>
+                  <div className="flex gap-3 flex-shrink-0 text-xs ml-2">
+                    {est > 0 && <span style={{ color: 'var(--text-faint)' }}>est ₹{est}</span>}
+                    <span className="font-semibold" style={{ color: '#F97316' }}>₹{s.actualSpend || 0}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Receipt photos */}
+          {receipts.length > 0 && (
+            <div>
+              <p className="text-sm font-semibold mb-2" style={{ color: 'var(--text)' }}>Receipts</p>
+              <div className="grid grid-cols-3 gap-2">
+                {receipts.map((s, idx) => (
+                  <a key={s.id ?? idx} href={s.receiptPhotoUrl} target="_blank" rel="noreferrer">
+                    <img src={s.receiptPhotoUrl} alt="Receipt"
+                      className="w-full rounded-xl object-cover" style={{ height: 80 }} />
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Issues */}
+          {issues.length > 0 && (
+            <div>
+              <p className="text-sm font-semibold mb-2" style={{ color: '#DC2626' }}>⚠ Issues</p>
+              {issues.map((s, idx) => (
+                <div key={s.id ?? idx} className="rounded-xl p-3 mb-2 text-sm"
+                  style={{ backgroundColor: '#FEF2F2', border: '1px solid #FECACA' }}>
+                  <p className="font-semibold" style={{ color: '#DC2626' }}>{s.placeName || `Stop ${idx + 1}`}</p>
+                  <p className="mt-0.5" style={{ color: '#7F1D1D' }}>{s.issueNote}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <button onClick={onClose}
+            className="w-full rounded-xl text-white font-bold text-base"
+            style={{ height: 56, background: 'linear-gradient(135deg, #F97316, #EA580C)' }}>
+            Done 🎉
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -486,15 +606,18 @@ export default function DriverDashboard() {
   const { user, userProfile } = useAuth();
 
   // ── Core state ──────────────────────────────────────────────────────────────
-  const [trips,              setTrips]              = useState([]);
-  const [loading,            setLoading]            = useState(true);
-  const [filter,             setFilter]             = useState('active');
-  const [activeTripView,     setActiveTripView]     = useState(null);
-  const [markDoneStop,       setMarkDoneStop]       = useState(null);
-  const [reportIssueStop,    setReportIssueStop]    = useState(null);
-  const [issueNote,          setIssueNote]          = useState('');
+  const [trips,               setTrips]               = useState([]);
+  const [loading,             setLoading]             = useState(true);
+  const [filter,              setFilter]              = useState('active');
+  const [activeTripView,      setActiveTripView]      = useState(null);
+  const [markDoneStop,        setMarkDoneStop]        = useState(null);
+  const [reportIssueStop,     setReportIssueStop]     = useState(null);
+  const [issueNote,           setIssueNote]           = useState('');
   const [showCompleteConfirm, setShowCompleteConfirm] = useState(false);
-  const [submitting,         setSubmitting]         = useState(false);
+  const [summaryTrip,         setSummaryTrip]         = useState(null);
+  const [submitting,          setSubmitting]          = useState(false);
+  const [notifications,       setNotifications]       = useState([]);
+  const [staffDocId,          setStaffDocId]          = useState(null);
 
   // ── GPS refs ─────────────────────────────────────────────────────────────────
   const watchIdRef      = useRef(null);
@@ -518,6 +641,20 @@ export default function DriverDashboard() {
         return list.find((t) => t.id === prev.id) ?? null;
       });
     }, () => setLoading(false));
+    return unsub;
+  }, [user?.uid]);
+
+  // ── Staff doc subscription (for notifications) ────────────────────────────────
+  useEffect(() => {
+    if (!user?.uid) return;
+    const q = query(collection(db, 'staff'), where('authUid', '==', user.uid));
+    const unsub = onSnapshot(q, (snap) => {
+      if (!snap.empty) {
+        const d = snap.docs[0];
+        setStaffDocId(d.id);
+        setNotifications(d.data().pendingNotifications ?? []);
+      }
+    });
     return unsub;
   }, [user?.uid]);
 
@@ -583,9 +720,10 @@ export default function DriverDashboard() {
         completedAt: serverTimestamp(),
       });
       stopGpsTracking();
+      const completedTrip = { ...activeTripView, status: 'completed', completedAt: new Date() };
       setActiveTripView(null);
       setShowCompleteConfirm(false);
-      toast.success('Trip completed! Great work! 🎉');
+      setSummaryTrip(completedTrip);
     } catch {
       toast.error('Failed to complete trip');
     }
@@ -691,6 +829,7 @@ export default function DriverDashboard() {
 
   // ── Trip list view ────────────────────────────────────────────────────────────
   return (
+    <>
     <div className="min-h-full" style={{ backgroundColor: 'var(--bg)' }}>
 
       {/* Gradient header */}
@@ -702,6 +841,29 @@ export default function DriverDashboard() {
           {trips.filter((t) => t.status === 'pending' || t.status === 'in_progress').length} active trips
         </p>
       </div>
+
+      {/* Notification banners */}
+      {notifications.map((notif, idx) => (
+        <div key={idx} className="mx-4 mt-3 rounded-2xl p-4 shadow-md active:opacity-80 cursor-pointer"
+          style={{ backgroundColor: '#FFF7ED', border: '2px solid #F97316' }}
+          onClick={async () => {
+            // Open the trip
+            const trip = trips.find((t) => t.id === notif.tripId);
+            if (trip) setActiveTripView(trip);
+            // Clear this notification
+            if (staffDocId) {
+              await updateDoc(doc(db, 'staff', staffDocId), {
+                pendingNotifications: arrayRemove(notif),
+              }).catch(() => {});
+            }
+          }}>
+          <p className="text-sm font-bold" style={{ color: '#EA580C' }}>
+            📦 New trip assigned
+          </p>
+          <p className="text-sm mt-0.5" style={{ color: 'var(--text)' }}>{notif.title}</p>
+          <p className="text-xs mt-1 font-semibold" style={{ color: '#F97316' }}>Tap to view →</p>
+        </div>
+      ))}
 
       {/* Active trip banner */}
       {activeTrip && (
@@ -771,5 +933,7 @@ export default function DriverDashboard() {
         )}
       </div>
     </div>
+    {summaryTrip && <TripSummaryModal trip={summaryTrip} onClose={() => setSummaryTrip(null)} />}
+    </>
   );
 }
