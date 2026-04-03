@@ -36,6 +36,8 @@ import StaffSettings from './pages/staff/StaffSettings';
 // Driver pages
 import DriverLayout    from './pages/driver/DriverLayout';
 import DriverDashboard from './pages/driver/DriverDashboard';
+import DriverNavigate  from './pages/driver/DriverNavigate';
+import DriverSettings  from './pages/driver/DriverSettings';
 
 const OWNER_ROLES   = ['owner'];
 // owners can browse manager views; trustedManager = elevated staff manager
@@ -130,6 +132,8 @@ export default function App() {
           >
             <Route index            element={<Navigate to="dashboard" replace />} />
             <Route path="dashboard" element={<DriverDashboard />} />
+            <Route path="navigate"  element={<DriverNavigate />} />
+            <Route path="settings"  element={<DriverSettings />} />
           </Route>
 
           {/* Default redirect */}
