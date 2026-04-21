@@ -1,0 +1,25 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Trip receipts, items photos, and voice notes uploaded by drivers
+    // Path: tripReceipts/{tripId}/{stopId}/{filename}
+    match /tripReceipts/{tripId}/{stopId}/{filename} {
+      // Any authenticated user can read (managers need to view in dashboard)
+      allow read: if request.auth != null;
+
+      // Only authenticated users can write; file must be ≤ 20 MB
+      allow write: if request.auth != null
+                   && request.resource.size < 20 * 1024 * 1024
+                   && (
+                     request.resource.contentType.matches('image/.*') ||
+                     request.resource.contentType.matches('audio/.*')
+                   );
+    }
+
+    // Deny everything else by default
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -109,6 +109,8 @@ const emptyForm = {
   budget: '',
   notes: '',
   stops: [emptyStop()],
+  stopDetectionMinutes: 10,
+  trafficAlertMinutes: 20,
 };
 
 // ── Small shared components ───────────────────────────────────────────────────
@@ -426,11 +428,16 @@ function CreateTripModal({ drivers, branchId, createdBy, onClose, onCreated }) {
         budgetSpent:         0,
         createdBy:           createdBy,
         createdAt:           serverTimestamp(),
-        startedAt:           null,
-        completedAt:         null,
-        driverLocation:      null,
-        stops:               stopsClean,
-        notes:               form.notes.trim(),
+        startedAt:               null,
+        completedAt:             null,
+        driverLocation:          null,
+        driverPath:              [],
+        detectedStops:           [],
+        trafficAlert:            null,
+        stopDetectionMinutes:    Number(form.stopDetectionMinutes) || 10,
+        trafficAlertMinutes:     Number(form.trafficAlertMinutes)  || 20,
+        stops:                   stopsClean,
+        notes:                   form.notes.trim(),
       });
       // Notify assigned driver via their staff document
       if (form.assignedDriver) {
@@ -514,10 +521,26 @@ function CreateTripModal({ drivers, branchId, createdBy, onClose, onCreated }) {
             </Field>
           </div>
 
+          {/* Detection settings */}
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Stop detect (mins)">
+              <input style={inputStyle} type="number" min="1" max="60"
+                value={form.stopDetectionMinutes}
+                onChange={(e) => set('stopDetectionMinutes', e.target.value)}
+                placeholder="10" />
+            </Field>
+            <Field label="Traffic alert (mins)">
+              <input style={inputStyle} type="number" min="1" max="120"
+                value={form.trafficAlertMinutes}
+                onChange={(e) => set('trafficAlertMinutes', e.target.value)}
+                placeholder="20" />
+            </Field>
+          </div>
+
           {/* Stops */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Stops</p>
+              <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Suggested Stops <span className="font-normal text-xs" style={{ color: 'var(--text-faint)' }}>(Optional)</span></p>
               <button type="button" onClick={addStop}
                 className="text-xs font-semibold px-3 py-1.5 rounded-lg"
                 style={{ backgroundColor: 'var(--color-primary)', color: '#fff' }}>
@@ -642,8 +665,53 @@ function DriverMarker({ position }) {
   );
 }
 
+// Renders the Google Maps TrafficLayer
+function TrafficLayer() {
+  const map = useMap();
+  useEffect(() => {
+    if (!map || !window.google) return;
+    const layer = new window.google.maps.TrafficLayer();
+    layer.setMap(map);
+    return () => layer.setMap(null);
+  }, [map]);
+  return null;
+}
+
+// Renders the driver's path as a blue polyline
+function DriverPolyline({ path }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!map || !window.google || !path?.length) return;
+    const pts = path.map((p) => ({ lat: Number(p.lat), lng: Number(p.lng) }));
+    const line = new window.google.maps.Polyline({
+      path: pts,
+      strokeColor: '#2563EB',
+      strokeOpacity: 0.7,
+      strokeWeight: 3,
+      map,
+    });
+    return () => line.setMap(null);
+  }, [map, path]);
+  return null;
+}
+
+// Blue pin for auto-detected stops with click popup
+function DetectedStopMarker({ stop, onClick }) {
+  return (
+    <AdvancedMarker position={stop.coordinates} onClick={onClick}>
+      <div className="flex flex-col items-center">
+        <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shadow-md"
+          style={{ backgroundColor: '#2563EB', border: '2px solid #fff' }}>
+          📍
+        </div>
+      </div>
+    </AdvancedMarker>
+  );
+}
+
 // Full map block rendered inside the detail modal
-function TripMapSection({ stops, driverLoc, assignedDriverName, budget, budgetSpent }) {
+function TripMapSection({ stops, driverLoc, assignedDriverName, budget, budgetSpent, driverPath, detectedStops }) {
+  const [selectedDetected, setSelectedDetected] = useState(null);
   if (!MAPS_KEY) return null;
 
   const currentStopIdx = (stops ?? []).findIndex((s) => s.status === 'pending');
@@ -651,7 +719,6 @@ function TripMapSection({ stops, driverLoc, assignedDriverName, budget, budgetSp
   const totalCount = (stops ?? []).length;
   const currentStop = currentStopIdx >= 0 ? stops[currentStopIdx] : null;
 
-  // Support both flat lat/lng and nested coordinates object
   const getPos = (s) => {
     const lat = s.coordinates?.lat ?? s.lat;
     const lng = s.coordinates?.lng ?? s.lng;
@@ -665,6 +732,7 @@ function TripMapSection({ stops, driverLoc, assignedDriverName, budget, budgetSp
   const defaultCenter = allPositions[0] ?? { lat: 20.59, lng: 78.96 };
 
   const timeAgo = formatTimeAgo(driverLoc?.updatedAt);
+  const validDetected = (detectedStops ?? []).filter((s) => s.coordinates?.lat != null);
 
   return (
     <div>
@@ -679,6 +747,8 @@ function TripMapSection({ stops, driverLoc, assignedDriverName, budget, budgetSp
             gestureHandling="greedy" disableDefaultUI
             mapId={import.meta.env.VITE_GOOGLE_MAPS_MAP_ID ?? 'DEMO_MAP_ID'}>
             <MapBoundsFitter positions={allPositions} />
+            <TrafficLayer />
+            {driverPath?.length > 0 && <DriverPolyline path={driverPath} />}
             {(stops ?? []).map((stop, idx) => {
               const pos = getPos(stop);
               return pos ? (
@@ -687,10 +757,47 @@ function TripMapSection({ stops, driverLoc, assignedDriverName, budget, budgetSp
                   isCurrent={idx === currentStopIdx} />
               ) : null;
             })}
+            {validDetected.map((ds) => (
+              <DetectedStopMarker key={ds.id} stop={ds}
+                onClick={() => setSelectedDetected(ds)} />
+            ))}
             {driverPos && <DriverMarker position={driverPos} />}
           </Map>
         </div>
       </APIProvider>
+
+      {/* Detected stop popup */}
+      {selectedDetected && (
+        <div className="mt-2 rounded-xl p-3 relative"
+          style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE' }}>
+          <button onClick={() => setSelectedDetected(null)}
+            className="absolute top-2 right-2 text-xs font-bold" style={{ color: '#2563EB' }}>✕</button>
+          <p className="text-xs font-bold mb-1" style={{ color: '#1D4ED8' }}>
+            📍 Detected Stop
+          </p>
+          <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
+            {selectedDetected.placeName || selectedDetected.address}
+          </p>
+          {selectedDetected.arrivedAt && (
+            <p className="text-xs mt-0.5" style={{ color: 'var(--text-sub)' }}>
+              Arrived {new Date(selectedDetected.arrivedAt).toLocaleTimeString()}
+              {selectedDetected.durationMinutes > 0 && ` · ${selectedDetected.durationMinutes} min`}
+            </p>
+          )}
+          {selectedDetected.itemsBought && (
+            <p className="text-xs mt-1" style={{ color: 'var(--text-sub)' }}>
+              🛒 {selectedDetected.itemsBought}
+            </p>
+          )}
+          {(selectedDetected.photos ?? []).length > 0 && (
+            <div className="flex gap-1 mt-2">
+              {selectedDetected.photos.map((url, i) => (
+                <img key={i} src={url} alt="" className="rounded-lg object-cover" style={{ width: 48, height: 48 }} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Live info panel */}
       <div className="mt-3 grid grid-cols-2 gap-2">
@@ -732,6 +839,7 @@ function TripMapSection({ stops, driverLoc, assignedDriverName, budget, budgetSp
 // ── Trip Summary Modal ────────────────────────────────────────────────────────
 function TripSummaryModal({ trip, onClose }) {
   const stops = trip.stops ?? [];
+  const detectedStops = trip.detectedStops ?? [];
   const totalEstimated = stops.reduce((sum, s) =>
     sum + (s.items ?? []).reduce((si, i) => si + (Number(i.estimatedPrice) * Number(i.quantity) || 0), 0), 0);
   const totalActual = stops.reduce((sum, s) => sum + (Number(s.actualSpend) || 0), 0);
@@ -840,6 +948,48 @@ function TripSummaryModal({ trip, onClose }) {
             </div>
           )}
 
+          {/* Detected / auto stops */}
+          {detectedStops.length > 0 && (
+            <div>
+              <p className="text-sm font-semibold mb-2" style={{ color: 'var(--text)' }}>
+                📍 Auto-Detected Stops ({detectedStops.length})
+              </p>
+              <div className="space-y-2">
+                {detectedStops.map((ds, idx) => (
+                  <div key={ds.id ?? idx} className="rounded-xl p-3"
+                    style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE' }}>
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-sm font-semibold" style={{ color: '#1D4ED8' }}>
+                        {ds.placeName || ds.address || `Stop ${idx + 1}`}
+                        {ds.isManual && <span className="ml-1 text-xs font-normal" style={{ color: '#6B7280' }}>(manual)</span>}
+                      </p>
+                      {ds.durationMinutes > 0 && (
+                        <span className="text-xs font-semibold flex-shrink-0" style={{ color: '#2563EB' }}>
+                          {ds.durationMinutes} min
+                        </span>
+                      )}
+                    </div>
+                    {ds.itemsBought && (
+                      <p className="text-xs mt-1" style={{ color: 'var(--text-sub)' }}>🛒 {ds.itemsBought}</p>
+                    )}
+                    {(ds.photos ?? []).length > 0 && (
+                      <div className="flex gap-1 mt-2 flex-wrap">
+                        {ds.photos.map((url, i) => (
+                          <a key={i} href={url} target="_blank" rel="noreferrer">
+                            <img src={url} alt="" className="rounded-lg object-cover" style={{ width: 56, height: 56 }} />
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                    {ds.voiceNoteUrl && (
+                      <audio src={ds.voiceNoteUrl} controls className="mt-2 w-full" style={{ height: 32 }} />
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <button onClick={onClose}
             className="w-full rounded-xl text-white font-bold text-base"
             style={{ height: 52, backgroundColor: '#F97316' }}>
@@ -941,10 +1091,28 @@ function TripDetailModal({ trip: initialTrip, onClose, onStatusChange }) {
             </div>
           )}
 
+          {/* Traffic alert banner */}
+          {trip.trafficAlert && (
+            <div className="rounded-xl px-4 py-3 flex items-start gap-2"
+              style={{ backgroundColor: '#FFFBEB', border: '1px solid #FDE68A' }}>
+              <span className="text-xl">🚦</span>
+              <div>
+                <p className="text-sm font-semibold" style={{ color: '#92400E' }}>
+                  Possible traffic delay
+                </p>
+                <p className="text-xs mt-0.5" style={{ color: '#B45309' }}>
+                  Near {trip.trafficAlert.placeName ?? 'unknown location'}
+                  {trip.trafficAlert.since && ` · since ${new Date(trip.trafficAlert.since).toLocaleTimeString()}`}
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Google Map — stops + driver location */}
           <TripMapSection stops={trip.stops} driverLoc={trip.driverLocation}
             assignedDriverName={trip.assignedDriverName}
-            budget={trip.budget} budgetSpent={trip.budgetSpent} />
+            budget={trip.budget} budgetSpent={trip.budgetSpent}
+            driverPath={trip.driverPath} detectedStops={trip.detectedStops} />
 
           {/* Stops */}
           <div>
@@ -1152,6 +1320,12 @@ function TripCard({ trip, onView }) {
                 style={{ backgroundColor: '#F0FDF4', color: '#16A34A' }}>
                 <span className="w-1.5 h-1.5 rounded-full animate-pulse inline-block" style={{ backgroundColor: '#16A34A' }} />
                 Live
+              </span>
+            )}
+            {trip.trafficAlert && (
+              <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                style={{ backgroundColor: '#FFFBEB', color: '#92400E' }}>
+                🚦 Possible delay
               </span>
             )}
           </div>
